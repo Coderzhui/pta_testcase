@@ -1,0 +1,4 @@
+raw_api_name,canonical_name,file_name,status,notes
+Tensor.new_empty,Tensor.new_empty,test_Tensor_new_empty.py,pending,
+Tensor.new_zeros,Tensor.new_zeros,test_Tensor_new_zeros.py,pending,
+Tensor.register_hook,Tensor.register_hook,test_Tensor_register_hook.py,pending,
