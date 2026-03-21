@@ -7,7 +7,7 @@ mkdir -p logs
 
 cat <<EOF | codex exec \
   --cd . \
-  --full-auto \
+  --dangerously-bypass-approvals-and-sandbox \
   --output-last-message "logs/${BASENAME}_summary.md" \
   -
 使用 batch-npu-api-test skill。
