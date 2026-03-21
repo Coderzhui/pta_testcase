@@ -1,0 +1,6 @@
+[submodule "ascend-pytorch"]
+	path = ascend-pytorch
+	url = https://gitcode.com/Ascend/pytorch.git
+[submodule "pytorch"]
+	path = pytorch
+	url = https://github.com/pytorch/pytorch.git

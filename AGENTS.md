@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Repository goal
-批量为 PyTorch API 生成 NPU 功能测试用例。
+批量为 PyTorch API 生成 NPU 功能测试用例，并自动完成运行、结果分析、报告输出，以及低风险自动修复。
 
 ## Hard requirements
 - 每个 API 只生成 1 个测试文件
@@ -38,7 +38,13 @@
 - 必须写清楚原因
 - 不要伪造覆盖
 
+## Pipeline stages
+- manifest / report / orchestration 阶段允许修改仓库中的脚本和文档，用于支撑批处理流水线
+- generator / reviewer 阶段默认只修改 `test/api_test/` 下 CSV 对应的目标文件
+- safe fix 阶段仅在明确低风险且可直接回归验证时，允许修改 `pytorch/` 或 `ascend-pytorch/`
+
 ## File discipline
-- 只修改 `test/api_test/` 下的目标文件
-- 不要顺手修改其他代码
+- 生成测试时，每个 API 仍然只允许对应 1 个 `test/api_test/` 下的目标文件
+- 不要顺手修改与当前失败无关的代码
+- 自动修复源码问题时必须保持最小改动，并在报告里留下修复摘要和 rerun 结果
 - 生成后优先保证文件可 import、pytest 可收集、命名正确

@@ -1,38 +1,24 @@
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
-import csv
 
-def api_to_filename(api: str) -> str:
-    name = api.strip()
-    if not name:
-        return ""
-    # 去掉 torch. 前缀只是为了文件名更短；你也可以保留
-    if name.startswith("torch."):
-        name = name[len("torch."):]
-    name = name.replace(".", "_")
-    return f"test_{name}.py"
+from scripts.pipeline import build_manifest_from_text_input
 
-txt_path = Path("apis.txt")
-csv_path = Path("api_manifest.csv")
 
-rows = []
-for line in txt_path.read_text(encoding="utf-8").splitlines():
-    api = line.strip()
-    if not api or api.startswith("#"):
-        continue
-    rows.append({
-        "raw_api_name": api,
-        "canonical_name": api,
-        "file_name": api_to_filename(api),
-        "status": "pending",
-        "notes": "",
-    })
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build api_manifest.csv from apis.txt")
+    parser.add_argument("input", nargs="?", default="apis.txt", type=Path, help="Path to apis.txt")
+    parser.add_argument("output", nargs="?", default="api_manifest.csv", type=Path, help="Path to output CSV")
+    return parser.parse_args()
 
-with csv_path.open("w", newline="", encoding="utf-8") as f:
-    writer = csv.DictWriter(
-        f,
-        fieldnames=["raw_api_name", "canonical_name", "file_name", "status", "notes"]
-    )
-    writer.writeheader()
-    writer.writerows(rows)
 
-print(f"written: {csv_path} ({len(rows)} rows)")
+def main() -> int:
+    args = parse_args()
+    rows = build_manifest_from_text_input(args.input.resolve(), args.output.resolve())
+    print(f"written: {args.output} ({len(rows)} rows)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
