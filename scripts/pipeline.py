@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import textwrap
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ TEST_DIR = ROOT / "test" / "api_test"
 RUNS_DIR = ROOT / "runs"
 DEFAULT_MANIFEST_FIELDS = ["raw_api_name", "canonical_name", "file_name", "status", "notes"]
 FIX_MODES = {"off", "tests", "safe"}
+RUN_ENGINES = {"local", "codex"}
+ANALYSIS_ENGINES = {"heuristic", "codex"}
 FAILURE_CATEGORIES = {
     "NONE",
     "TEST_BUG",
@@ -28,6 +31,7 @@ FAILURE_CATEGORIES = {
     "API_BEHAVIOR_MISMATCH",
     "PYTORCH_BUG",
     "TORCH_NPU_BUG",
+    "OPERATOR_BUG",
     "FLAKY_OR_UNSTABLE",
     "INSUFFICIENT_COVERAGE",
     "UNKNOWN",
@@ -57,6 +61,8 @@ class ApiResult:
     pytest_outcome: str = "not_run"
     failure_category: str = "UNKNOWN"
     root_cause_summary: str = ""
+    initial_failure_category: str = "UNKNOWN"
+    initial_root_cause_summary: str = ""
     failure_messages: list[str] = field(default_factory=list)
     tests_total: int = 0
     passed_count: int = 0
@@ -73,6 +79,19 @@ class ApiResult:
     changed_files: list[str] = field(default_factory=list)
     rerun_status: str = "not_run"
     report_path: str = ""
+
+
+class PipelineLogger:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log(self, message: str) -> None:
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        line = f"[{timestamp}] {message}"
+        print(line, flush=True)
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
 
 
 def api_to_filename(api_name: str) -> str:
@@ -183,6 +202,33 @@ def run_command(
     return completed
 
 
+def run_codex_exec(
+    prompt: str,
+    *,
+    summary_path: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    cwd: Path = ROOT,
+) -> subprocess.CompletedProcess[str]:
+    command = [
+        "codex",
+        "exec",
+        "--cd",
+        ".",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--output-last-message",
+        str(summary_path),
+        "-",
+    ]
+    return run_command(
+        command,
+        cwd=cwd,
+        stdin_text=prompt,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+
+
 def relative_to_root(path: Path) -> str:
     try:
         return str(path.resolve().relative_to(ROOT))
@@ -227,25 +273,33 @@ def codex_prompt_for_generation(manifest_path: Path, run_dir: Path, max_workers:
     )
 
 
-def run_generation_stage(manifest_path: Path, run_dir: Path, max_workers: int) -> None:
+def run_generation_stage(
+    manifest_path: Path,
+    run_dir: Path,
+    max_workers: int,
+    logger: PipelineLogger | None = None,
+) -> None:
+    started = time.monotonic()
+    if logger is not None:
+        logger.log(
+            "stage=generation start "
+            f"manifest={relative_to_root(manifest_path)} max_workers={max_workers} "
+            f"stdout={relative_to_root(run_dir / 'codex_generation.stdout.log')} "
+            f"stderr={relative_to_root(run_dir / 'codex_generation.stderr.log')}"
+        )
     prompt = codex_prompt_for_generation(manifest_path, run_dir, max_workers)
-    command = [
-        "codex",
-        "exec",
-        "--cd",
-        ".",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--output-last-message",
-        str(run_dir / "generation_summary.md"),
-        "-",
-    ]
-    completed = run_command(
-        command,
-        cwd=ROOT,
-        stdin_text=prompt,
+    completed = run_codex_exec(
+        prompt,
+        summary_path=run_dir / "generation_summary.md",
         stdout_path=run_dir / "codex_generation.stdout.log",
         stderr_path=run_dir / "codex_generation.stderr.log",
     )
+    if logger is not None:
+        logger.log(
+            "stage=generation done "
+            f"returncode={completed.returncode} elapsed_s={time.monotonic() - started:.1f} "
+            f"summary={relative_to_root(run_dir / 'generation_summary.md')}"
+        )
     if completed.returncode != 0:
         raise RuntimeError(
             "generation stage failed; inspect "
@@ -253,18 +307,86 @@ def run_generation_stage(manifest_path: Path, run_dir: Path, max_workers: int) -
         )
 
 
-def run_pytest_stage(test_files: list[Path], run_dir: Path, label: str) -> dict[str, object]:
+def build_pytest_command(test_files: list[Path], junit_path: Path) -> list[str]:
+    return [sys.executable, "-m", "pytest", "-q", "--junitxml", str(junit_path), *[str(path) for path in test_files]]
+
+
+def codex_prompt_for_execution(
+    label: str,
+    pytest_cmd: str,
+    command_path: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    returncode_path: Path,
+) -> str:
+    command_file = shlex.quote(str(command_path))
+    stdout_file = shlex.quote(str(stdout_path))
+    stderr_file = shlex.quote(str(stderr_path))
+    returncode_file = shlex.quote(str(returncode_path))
+    parent_dir = shlex.quote(str(stdout_path.parent))
+    shell_script = textwrap.dedent(
+        f"""\
+        mkdir -p {parent_dir}
+        cat <<'EOF' > {command_file}
+        {pytest_cmd}
+        EOF
+        set +e
+        {pytest_cmd} > {stdout_file} 2> {stderr_file}
+        status=$?
+        printf '%s\\n' "$status" > {returncode_file}
+        exit 0
+        """
+    ).strip()
+    return textwrap.dedent(
+        f"""\
+        执行 pytest 阶段，不要修改任何源码、测试文件或文档。
+
+        阶段标签: {label}
+        你必须运行下面这段 bash 脚本，完整保留 pytest 的 stdout/stderr 和 return code。
+
+        ```bash
+        {shell_script}
+        ```
+
+        要求：
+        1. 只执行上面的脚本，不要额外改文件。
+        2. 即使 pytest 失败，也不要把这次 codex 任务判成失败；保留日志即可。
+        3. 最终回复只写简洁总结，包含 return code 和产物路径。
+        """
+    )
+
+
+def run_pytest_stage(
+    test_files: list[Path],
+    run_dir: Path,
+    label: str,
+    engine: str,
+    logger: PipelineLogger | None = None,
+) -> dict[str, object]:
     junit_path = run_dir / "pytest_raw" / f"{label}_junit.xml"
     stdout_path = run_dir / "pytest_raw" / f"{label}.stdout.log"
     stderr_path = run_dir / "pytest_raw" / f"{label}.stderr.log"
+    command_path = run_dir / "pytest_raw" / f"{label}.command.txt"
+    returncode_path = run_dir / "pytest_raw" / f"{label}.returncode.txt"
     junit_path.parent.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    if logger is not None:
+        logger.log(
+            "stage=pytest start "
+            f"label={label} engine={engine} test_files={len(test_files)} "
+            f"stdout={relative_to_root(stdout_path)} stderr={relative_to_root(stderr_path)} "
+            f"junit={relative_to_root(junit_path)}"
+        )
 
     if not test_files:
         junit_path.write_text("<testsuite tests=\"0\" failures=\"0\" errors=\"0\" skipped=\"0\" />\n", encoding="utf-8")
         stdout_path.write_text("", encoding="utf-8")
         stderr_path.write_text("", encoding="utf-8")
         command_text = "(pytest skipped: no target files existed)"
-        (run_dir / "pytest_raw" / f"{label}.command.txt").write_text(command_text, encoding="utf-8")
+        command_path.write_text(command_text, encoding="utf-8")
+        returncode_path.write_text("0\n", encoding="utf-8")
+        if logger is not None:
+            logger.log(f"stage=pytest done label={label} returncode=0 elapsed_s={time.monotonic() - started:.1f} skipped_no_files=true")
         return {
             "returncode": 0,
             "junit_path": junit_path,
@@ -273,12 +395,58 @@ def run_pytest_stage(test_files: list[Path], run_dir: Path, label: str) -> dict[
             "command": command_text,
         }
 
-    cmd = [sys.executable, "-m", "pytest", "-q", "--junitxml", str(junit_path), *[str(path) for path in test_files]]
-    completed = run_command(cmd, cwd=ROOT, stdout_path=stdout_path, stderr_path=stderr_path)
+    cmd = build_pytest_command(test_files, junit_path)
     command_text = " ".join(shlex.quote(part) for part in cmd)
-    (run_dir / "pytest_raw" / f"{label}.command.txt").write_text(command_text, encoding="utf-8")
+    if engine == "local":
+        completed = run_command(cmd, cwd=ROOT, stdout_path=stdout_path, stderr_path=stderr_path)
+        command_path.write_text(command_text, encoding="utf-8")
+        returncode_path.write_text(f"{completed.returncode}\n", encoding="utf-8")
+        if logger is not None:
+            logger.log(
+                f"stage=pytest done label={label} returncode={completed.returncode} "
+                f"elapsed_s={time.monotonic() - started:.1f}"
+            )
+        return {
+            "returncode": completed.returncode,
+            "junit_path": junit_path,
+            "stdout_path": stdout_path,
+            "stderr_path": stderr_path,
+            "command": command_text,
+        }
+
+    prompt = codex_prompt_for_execution(
+        label,
+        command_text,
+        command_path,
+        stdout_path,
+        stderr_path,
+        returncode_path,
+    )
+    completed = run_codex_exec(
+        prompt,
+        summary_path=run_dir / "pytest_raw" / f"{label}.codex.md",
+        stdout_path=run_dir / "pytest_raw" / f"{label}.codex.stdout.log",
+        stderr_path=run_dir / "pytest_raw" / f"{label}.codex.stderr.log",
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"execution stage '{label}' failed; inspect "
+            f"{relative_to_root(run_dir / 'pytest_raw' / f'{label}.codex.stderr.log')}"
+        )
+    if not returncode_path.exists():
+        raise RuntimeError(
+            f"execution stage '{label}' did not write return code; inspect "
+            f"{relative_to_root(run_dir / 'pytest_raw' / f'{label}.codex.md')}"
+        )
+    returncode = int(returncode_path.read_text(encoding="utf-8").strip() or "1")
+    if logger is not None:
+        logger.log(
+            f"stage=pytest done label={label} returncode={returncode} "
+            f"elapsed_s={time.monotonic() - started:.1f} "
+            f"codex_summary={relative_to_root(run_dir / 'pytest_raw' / f'{label}.codex.md')}"
+        )
     return {
-        "returncode": completed.returncode,
+        "returncode": returncode,
         "junit_path": junit_path,
         "stdout_path": stdout_path,
         "stderr_path": stderr_path,
@@ -407,6 +575,8 @@ def detect_category(text: str, final_status: str) -> str:
         return "UNSUPPORTED_ON_NPU"
     if any(token in lowered for token in ["xfail", "not reliable", "unstable", "flaky"]):
         return "FLAKY_OR_UNSTABLE"
+    if any(token in lowered for token in ["aclnn", "aclop", "op api", "opapi", "op-plugin", "kernel", "operator"]):
+        return "OPERATOR_BUG"
     if any(token in lowered for token in ["/ascend-pytorch/", "torch_npu/"]):
         return "TORCH_NPU_BUG"
     if any(token in lowered for token in ["/pytorch/", " aten/", "torch/csrc", "c10/"]):
@@ -425,14 +595,16 @@ def detect_category(text: str, final_status: str) -> str:
 def recommend_fix(category: str, fix_mode: str) -> tuple[str, bool, str]:
     if fix_mode == "off":
         return "manual_followup", False, ""
-    if category in {"TEST_BUG", "ENVIRONMENT_MISSING", "UNSUPPORTED_ON_NPU", "FLAKY_OR_UNSTABLE", "INSUFFICIENT_COVERAGE"}:
+    if category == "TEST_BUG":
         return "adjust_test", True, "test/api_test"
+    if category in {"ENVIRONMENT_MISSING", "UNSUPPORTED_ON_NPU", "FLAKY_OR_UNSTABLE", "INSUFFICIENT_COVERAGE", "OPERATOR_BUG"}:
+        return "manual_followup", False, ""
     if fix_mode == "safe" and category == "PYTORCH_BUG":
         return "patch_pytorch", True, "pytorch"
     if fix_mode == "safe" and category == "TORCH_NPU_BUG":
         return "patch_torch_npu", True, "ascend-pytorch"
     if fix_mode == "safe" and category == "API_BEHAVIOR_MISMATCH":
-        return "adjust_test_or_patch_source", True, "test/api_test,pytorch,ascend-pytorch"
+        return "manual_followup", False, ""
     return "manual_followup", False, ""
 
 
@@ -454,6 +626,8 @@ def create_results(entries: list[ManifestEntry], execution: dict[str, object], r
             pytest_outcome=pytest_outcome,
             failure_category=category,
             root_cause_summary=message or "No explicit failure detail was captured.",
+            initial_failure_category=category,
+            initial_root_cause_summary=message or "No explicit failure detail was captured.",
             failure_messages=list(bucket["messages"]),
             tests_total=int(bucket["tests_total"]),
             passed_count=int(bucket["passed_count"]),
@@ -469,6 +643,215 @@ def create_results(entries: list[ManifestEntry], execution: dict[str, object], r
         if result.failure_category not in FAILURE_CATEGORIES:
             result.failure_category = "UNKNOWN"
         results.append(result)
+    return results
+
+
+def build_analysis_inputs(results: list[ApiResult], run_dir: Path, execution: dict[str, object]) -> Path:
+    analysis_items = []
+    for result in results:
+        if result.final_status not in {"pytest_failed", "skipped", "xfailed", "review_failed"}:
+            continue
+        analysis_items.append(
+            {
+                "canonical_name": result.canonical_name,
+                "file_name": result.file_name,
+                "test_path": relative_to_root(TEST_DIR / result.file_name),
+                "final_status": result.final_status,
+                "pytest_outcome": result.pytest_outcome,
+                "heuristic_failure_category": result.failure_category,
+                "heuristic_summary": result.root_cause_summary,
+                "failure_messages": result.failure_messages,
+            }
+        )
+
+    payload = {
+        "run_dir": relative_to_root(run_dir),
+        "generation_summary": relative_to_root(run_dir / "generation_summary.md"),
+        "execution_artifacts": {
+            "junit_path": relative_to_root(Path(execution["junit_path"])),
+            "stdout_path": relative_to_root(Path(execution["stdout_path"])),
+            "stderr_path": relative_to_root(Path(execution["stderr_path"])),
+            "command": execution["command"],
+        },
+        "failure_taxonomy": relative_to_root(ROOT / "docs" / "failure_taxonomy.md"),
+        "items": analysis_items,
+    }
+    path = run_dir / "analysis_inputs.json"
+    write_json(path, payload)
+    return path
+
+
+def codex_prompt_for_analysis(analysis_input_path: Path, triage_path: Path) -> str:
+    categories = ", ".join(sorted(FAILURE_CATEGORIES - {"NONE"}))
+    return textwrap.dedent(
+        f"""\
+        执行失败分诊阶段，不要修改任何源码、测试文件或文档。
+
+        输入文件：
+        - 分析输入：{relative_to_root(analysis_input_path)}
+        - 分类规则：{relative_to_root(ROOT / 'docs' / 'failure_taxonomy.md')}
+
+        任务：
+        1. 读取 analysis_inputs.json 中的所有失败/skip/xfail/review_failed API。
+        2. 必要时查看对应测试文件和 pytest 日志。
+        3. 为每个 API 产出一条 JSON 记录，写入 {relative_to_root(triage_path)}。
+
+        输出 JSON 必须是数组，每一项严格包含：
+        - canonical_name
+        - failure_category
+        - root_cause_summary
+
+        约束：
+        1. failure_category 只能取这些值：{categories}
+        2. 只有确定是 test/api_test 下用例代码问题时，才标记为 TEST_BUG。
+        3. 环境问题、PyTorch 代码问题、torch_npu/ascend-pytorch 问题、底层算子问题要区分开。
+        4. 不明确时宁可保守标成 UNKNOWN 或 API_BEHAVIOR_MISMATCH，不要编造证据。
+        5. 最终回复只写简洁分析总结。
+        """
+    )
+
+
+def load_analysis_triage(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, list):
+        return {}
+    triage: dict[str, dict[str, str]] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        canonical_name = str(item.get("canonical_name", "")).strip()
+        category = str(item.get("failure_category", "")).strip()
+        summary = str(item.get("root_cause_summary", "")).strip()
+        if not canonical_name or category not in FAILURE_CATEGORIES:
+            continue
+        triage[canonical_name] = {
+            "failure_category": category,
+            "root_cause_summary": summary,
+        }
+    return triage
+
+
+def render_analysis_summary(results: list[ApiResult], run_dir: Path, fix_mode: str) -> str:
+    lines = [
+        f"# Analysis Summary: {run_dir.name}",
+        "",
+        f"- Fix mode: `{fix_mode}`",
+        f"- Inputs: `{relative_to_root(run_dir / 'analysis_inputs.json')}`",
+        f"- Triage JSON: `{relative_to_root(run_dir / 'analysis_triage.json')}`",
+        f"- Codex notes: `{relative_to_root(run_dir / 'analysis_codex.md')}`",
+        "",
+        "## Auto-Fix Candidates",
+    ]
+    candidates = [result for result in results if result.auto_fixable and result.final_status in {"pytest_failed", "skipped", "xfailed", "review_failed"}]
+    if candidates:
+        for result in candidates:
+            lines.append(
+                f"- `{result.canonical_name}`: `{result.failure_category}` -> `{result.fix_recommendation}`; "
+                f"{result.root_cause_summary or 'no summary'}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Report-Only Failures"])
+    report_only = [result for result in results if not result.auto_fixable and result.final_status in {"pytest_failed", "skipped", "xfailed", "review_failed"}]
+    if report_only:
+        for result in report_only:
+            lines.append(
+                f"- `{result.canonical_name}`: `{result.failure_category}`; "
+                f"{result.root_cause_summary or 'no summary'}"
+            )
+    else:
+        lines.append("- None")
+    return "\n".join(lines) + "\n"
+
+
+def run_analysis_stage(
+    results: list[ApiResult],
+    run_dir: Path,
+    execution: dict[str, object],
+    fix_mode: str,
+    engine: str,
+    logger: PipelineLogger | None = None,
+) -> list[ApiResult]:
+    started = time.monotonic()
+    analysis_input_path = build_analysis_inputs(results, run_dir, execution)
+    triage_path = run_dir / "analysis_triage.json"
+    codex_notes_path = run_dir / "analysis_codex.md"
+    failing_results = [result for result in results if result.final_status in {"pytest_failed", "skipped", "xfailed", "review_failed"}]
+    if logger is not None:
+        logger.log(
+            "stage=analysis start "
+            f"engine={engine} failing_apis={len(failing_results)} "
+            f"inputs={relative_to_root(analysis_input_path)}"
+        )
+    heuristic_triage = [
+        {
+            "canonical_name": result.canonical_name,
+            "failure_category": result.failure_category,
+            "root_cause_summary": result.root_cause_summary,
+        }
+        for result in failing_results
+    ]
+
+    if not failing_results:
+        write_json(triage_path, [])
+        codex_notes_path.write_text("No failing APIs required analysis.\n", encoding="utf-8")
+        (run_dir / "analysis_summary.md").write_text(render_analysis_summary(results, run_dir, fix_mode), encoding="utf-8")
+        if logger is not None:
+            logger.log(
+                f"stage=analysis done engine={engine} failing_apis=0 elapsed_s={time.monotonic() - started:.1f} "
+                f"summary={relative_to_root(run_dir / 'analysis_summary.md')}"
+            )
+        return results
+
+    if engine == "codex":
+        prompt = codex_prompt_for_analysis(analysis_input_path, triage_path)
+        completed = run_codex_exec(
+            prompt,
+            summary_path=codex_notes_path,
+            stdout_path=run_dir / "analysis_codex.stdout.log",
+            stderr_path=run_dir / "analysis_codex.stderr.log",
+        )
+        if completed.returncode == 0:
+            triage = load_analysis_triage(triage_path)
+            if triage:
+                for result in results:
+                    item = triage.get(result.canonical_name)
+                    if not item:
+                        continue
+                    result.failure_category = item["failure_category"]
+                    result.root_cause_summary = item["root_cause_summary"] or result.root_cause_summary
+                    result.initial_failure_category = result.failure_category
+                    result.initial_root_cause_summary = result.root_cause_summary
+                    result.fix_recommendation, result.auto_fixable, result.fix_target = recommend_fix(result.failure_category, fix_mode)
+            else:
+                write_json(triage_path, heuristic_triage)
+                codex_notes_path.write_text(
+                    "Codex analysis did not produce valid triage JSON; falling back to heuristic classification.\n",
+                    encoding="utf-8",
+                )
+        else:
+            write_json(triage_path, heuristic_triage)
+            codex_notes_path.write_text(
+                "Codex analysis failed; falling back to heuristic classification.\n",
+                encoding="utf-8",
+            )
+    else:
+        write_json(triage_path, heuristic_triage)
+        codex_notes_path.write_text("Analysis engine=heuristic; no nested codex review was run.\n", encoding="utf-8")
+
+    (run_dir / "analysis_summary.md").write_text(render_analysis_summary(results, run_dir, fix_mode), encoding="utf-8")
+    if logger is not None:
+        logger.log(
+            "stage=analysis done "
+            f"engine={engine} failing_apis={len(failing_results)} elapsed_s={time.monotonic() - started:.1f} "
+            f"summary={relative_to_root(run_dir / 'analysis_summary.md')}"
+        )
     return results
 
 
@@ -542,26 +925,28 @@ def fix_prompt(result: ApiResult, run_dir: Path, fix_mode: str) -> str:
     )
 
 
-def run_fix_attempt(result: ApiResult, run_dir: Path, fix_mode: str) -> ApiResult:
+def run_fix_attempt(
+    result: ApiResult,
+    run_dir: Path,
+    fix_mode: str,
+    run_engine: str,
+    logger: PipelineLogger | None = None,
+) -> ApiResult:
+    started = time.monotonic()
+    if logger is not None:
+        logger.log(
+            "stage=fix start "
+            f"api={result.canonical_name} category={result.failure_category} "
+            f"target=test/api_test/{result.file_name}"
+        )
     marker = run_dir / "fixes" / f"{Path(result.file_name).stem}.before"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     prompt = fix_prompt(result, run_dir, fix_mode)
     summary_path = run_dir / "fixes" / f"{Path(result.file_name).stem}.md"
-    command = [
-        "codex",
-        "exec",
-        "--cd",
-        ".",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--output-last-message",
-        str(summary_path),
-        "-",
-    ]
-    completed = run_command(
-        command,
-        cwd=ROOT,
-        stdin_text=prompt,
+    completed = run_codex_exec(
+        prompt,
+        summary_path=summary_path,
         stdout_path=run_dir / "fixes" / f"{Path(result.file_name).stem}.stdout.log",
         stderr_path=run_dir / "fixes" / f"{Path(result.file_name).stem}.stderr.log",
     )
@@ -582,7 +967,13 @@ def run_fix_attempt(result: ApiResult, run_dir: Path, fix_mode: str) -> ApiResul
     if completed.returncode != 0 and not result.fix_summary:
         result.fix_summary = "codex fix attempt exited non-zero; inspect fix logs."
     if result.fix_applied:
-        rerun = run_pytest_stage([TEST_DIR / result.file_name], run_dir, f"rerun_{Path(result.file_name).stem}")
+        rerun = run_pytest_stage(
+            [TEST_DIR / result.file_name],
+            run_dir,
+            f"rerun_{Path(result.file_name).stem}",
+            run_engine,
+            logger,
+        )
         rerun_results = create_results(
             [ManifestEntry(result.raw_api_name, result.canonical_name, result.file_name)],
             rerun,
@@ -593,18 +984,40 @@ def run_fix_attempt(result: ApiResult, run_dir: Path, fix_mode: str) -> ApiResul
         result.rerun_status = rerun_result.final_status
     else:
         result.rerun_status = "not_run"
+    if logger is not None:
+        logger.log(
+            "stage=fix done "
+            f"api={result.canonical_name} fix_applied={result.fix_applied} "
+            f"rerun_status={result.rerun_status} elapsed_s={time.monotonic() - started:.1f} "
+            f"artifact={result.fix_artifact or 'none'}"
+        )
     return result
 
 
-def apply_auto_fixes(results: list[ApiResult], run_dir: Path, fix_mode: str) -> list[ApiResult]:
+def apply_auto_fixes(
+    results: list[ApiResult],
+    run_dir: Path,
+    fix_mode: str,
+    run_engine: str,
+    logger: PipelineLogger | None = None,
+) -> list[ApiResult]:
     if fix_mode == "off":
+        if logger is not None:
+            logger.log("stage=fix skip reason=fix_mode_off")
         return results
+    candidates = [
+        result
+        for result in results
+        if result.final_status in {"pytest_failed", "skipped", "xfailed", "review_failed"} and result.auto_fixable
+    ]
+    if logger is not None:
+        logger.log(f"stage=fix queue candidates={len(candidates)} fix_mode={fix_mode}")
     updated: list[ApiResult] = []
     for result in results:
         if result.final_status not in {"pytest_failed", "skipped", "xfailed", "review_failed"} or not result.auto_fixable:
             updated.append(result)
             continue
-        updated.append(run_fix_attempt(result, run_dir, fix_mode))
+        updated.append(run_fix_attempt(result, run_dir, fix_mode, run_engine, logger))
     return updated
 
 
@@ -664,6 +1077,8 @@ def render_summary(
         f"- Total APIs: `{total}`",
         f"- Results JSON: `{relative_to_root(run_dir / 'results.json')}`",
         f"- Results CSV: `{relative_to_root(run_dir / 'results.csv')}`",
+        f"- Generation Summary: `{relative_to_root(run_dir / 'generation_summary.md')}`",
+        f"- Analysis Summary: `{relative_to_root(run_dir / 'analysis_summary.md')}`",
         "",
         "## Status Counts",
     ]
@@ -677,7 +1092,10 @@ def render_summary(
     if fixed:
         for result in fixed:
             changed = ", ".join(result.changed_files) if result.changed_files else "no tracked file diff detected"
-            lines.append(f"- `{result.canonical_name}` -> `{result.fix_target or 'unknown'}`; rerun `{result.rerun_status}`; changed: {changed}")
+            lines.append(
+                f"- `{result.canonical_name}`: initial `{result.initial_failure_category}` -> "
+                f"`{result.fix_target or 'unknown'}`; rerun `{result.rerun_status}`; changed: {changed}"
+            )
     else:
         lines.append("- None")
 
@@ -734,8 +1152,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     run_parser.add_argument("--report-dir", type=Path, default=RUNS_DIR, help="Base directory for run artifacts")
     run_parser.add_argument("--resume", type=Path, help="Reuse an existing run directory")
     run_parser.add_argument("--fix-mode", choices=sorted(FIX_MODES), default="tests", help="Automatic fix scope")
+    run_parser.add_argument("--run-engine", choices=sorted(RUN_ENGINES), default="codex", help="How pytest is executed")
+    run_parser.add_argument("--analysis-engine", choices=sorted(ANALYSIS_ENGINES), default="codex", help="How failure triage is performed")
     run_parser.add_argument("--skip-generate", action="store_true", help="Skip generation and reuse existing tests")
     run_parser.add_argument("--max-workers", type=int, default=8, help="Generation stage worker budget hint for nested codex")
+    run_parser.add_argument("--debug", action="store_true", help="Enable debug mode to retain all intermediate subagent logs and full codex traces")
     return parser.parse_args(argv)
 
 
@@ -746,17 +1167,42 @@ def do_build_manifest(args: argparse.Namespace) -> int:
 
 
 def do_run(args: argparse.Namespace) -> int:
+    start_time = time.time()
     run_dir = ensure_run_dir(args.report_dir, args.resume)
+    logger = PipelineLogger(run_dir / "pipeline.log")
+    
+    if args.debug:
+        logger.log("debug mode enabled: full codex and subagent traces will be collected")
+
+    logger.log(
+        "pipeline start "
+        f"input={relative_to_root(args.input.resolve())} fix_mode={args.fix_mode} "
+        f"run_engine={args.run_engine} analysis_engine={args.analysis_engine} "
+        f"run_dir={relative_to_root(run_dir)}"
+    )
     entries, manifest_path = resolve_input_manifest(args.input, run_dir)
     target_entries = select_target_entries(entries)
-    target_files = [entry.test_path for entry in target_entries]
+    logger.log(
+        "manifest ready "
+        f"entries={len(entries)} target_entries={len(target_entries)} "
+        f"manifest={relative_to_root(manifest_path)}"
+    )
 
     if not args.skip_generate:
-        run_generation_stage(manifest_path, run_dir, args.max_workers)
+        run_generation_stage(manifest_path, run_dir, args.max_workers, logger)
+    else:
+        (run_dir / "generation_summary.md").write_text(
+            "Generation stage was skipped because --skip-generate was set.\n",
+            encoding="utf-8",
+        )
+        logger.log("stage=generation skip reason=skip_generate")
 
     existing_entries = [entry for entry in target_entries if entry.test_path.exists()]
     missing_entries = [entry for entry in target_entries if not entry.test_path.exists()]
-    execution = run_pytest_stage([entry.test_path for entry in existing_entries], run_dir, "initial")
+    logger.log(
+        f"pytest targets ready existing_files={len(existing_entries)} missing_files={len(missing_entries)}"
+    )
+    execution = run_pytest_stage([entry.test_path for entry in existing_entries], run_dir, "initial", args.run_engine, logger)
     results = create_results(target_entries, execution, run_dir, args.fix_mode)
     missing_names = {entry.canonical_name for entry in missing_entries}
     for result in results:
@@ -766,16 +1212,26 @@ def do_run(args: argparse.Namespace) -> int:
             result.pytest_outcome = "not_generated"
             result.failure_category = "TEST_BUG"
             result.root_cause_summary = "Expected test file was not created during generation/review stage."
+            result.initial_failure_category = result.failure_category
+            result.initial_root_cause_summary = result.root_cause_summary
             result.fix_recommendation, result.auto_fixable, result.fix_target = recommend_fix(result.failure_category, args.fix_mode)
 
-    results = apply_auto_fixes(results, run_dir, args.fix_mode)
+    results = run_analysis_stage(results, run_dir, execution, args.fix_mode, args.analysis_engine, logger)
+    results = apply_auto_fixes(results, run_dir, args.fix_mode, args.run_engine, logger)
     if any(result.fix_applied for result in results):
         rerun_files = [entry.test_path for entry in target_entries if entry.test_path.exists()]
-        final_execution = run_pytest_stage(rerun_files, run_dir, "postfix_batch")
+        logger.log(f"stage=pytest rerun start files={len(rerun_files)}")
+        final_execution = run_pytest_stage(rerun_files, run_dir, "postfix_batch", args.run_engine, logger)
         results = merge_final_batch_results(target_entries, results, final_execution, run_dir)
+    else:
+        logger.log("stage=pytest rerun skip reason=no_fix_applied")
 
     write_results(results, run_dir)
     command_parts = [sys.executable, "-m", "scripts.pipeline", "run", "--input", str(args.input), "--fix-mode", args.fix_mode]
+    if args.run_engine != "codex":
+        command_parts.extend(["--run-engine", args.run_engine])
+    if args.analysis_engine != "codex":
+        command_parts.extend(["--analysis-engine", args.analysis_engine])
     if args.skip_generate:
         command_parts.append("--skip-generate")
     if args.resume:
@@ -784,8 +1240,30 @@ def do_run(args: argparse.Namespace) -> int:
         command_parts.extend(["--report-dir", str(args.report_dir)])
     if args.max_workers != 8:
         command_parts.extend(["--max-workers", str(args.max_workers)])
+    if args.debug:
+        command_parts.append("--debug")
     command_text = " ".join(shlex.quote(part) for part in command_parts)
     write_summary(results, run_dir, args.input, args.fix_mode, manifest_path, command_text)
+    
+    if args.debug:
+        import shutil
+        debug_dir = run_dir / "debug_logs"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        codex_sessions_dir = Path.home() / ".codex" / "sessions"
+        if codex_sessions_dir.exists():
+            count = 0
+            for jsonl_file in codex_sessions_dir.rglob("*.jsonl"):
+                if jsonl_file.is_file() and jsonl_file.stat().st_mtime >= start_time:
+                    shutil.copy2(jsonl_file, debug_dir / jsonl_file.name)
+                    count += 1
+            logger.log(f"debug_logs_collected count={count} in {relative_to_root(debug_dir)}")
+
+    logger.log(
+        "pipeline done "
+        f"results_json={relative_to_root(run_dir / 'results.json')} "
+        f"results_csv={relative_to_root(run_dir / 'results.csv')} "
+        f"summary={relative_to_root(run_dir / 'summary.md')}"
+    )
     print(relative_to_root(run_dir / "summary.md"))
     return 0
 

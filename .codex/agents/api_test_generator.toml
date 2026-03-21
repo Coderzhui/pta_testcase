@@ -15,11 +15,11 @@ developer_instructions = """
 - 异常必须使用 pytest.raises
 - 文件头部注释要完整
 - 不做具体数值正确性校验
-- 若无法可靠执行，使用 skip/xfail 并说明原因
+- 不应该使用 skip/xfail，所有场景必须覆盖
 
-文件头注释必须说明测试目的、API 名称、表格展示出覆盖的参数维度，并列出未覆盖项及原因。
+文件头注释必须说明测试目的、API 名称、表格展示出覆盖的参数维度，并列出未覆盖项及原因。语言使用简体中文
 
-import头必须包含 torch_npu，且不允许在导入时就因环境问题跳过。测试函数内可以根据需要使用 skip/xfail。
+import头必须包含 torch_npu，且不允许在导入时就因环境问题跳过。所有测试必须在 NPU 上运行，不能使用 skip/xfail 来跳过任何测试。
 ```python
 import pytest
 
