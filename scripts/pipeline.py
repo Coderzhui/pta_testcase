@@ -42,6 +42,8 @@ RUN_MANIFEST_FIELDS = DEFAULT_MANIFEST_FIELDS + [
     "changed_files",
     "fix_artifact",
     "report_path",
+    "intervention_type",
+    "intervention_reason",
     "last_updated_utc",
 ]
 FIX_MODES = {"off", "tests", "safe"}
@@ -103,6 +105,8 @@ class ApiResult:
     changed_files: list[str] = field(default_factory=list)
     rerun_status: str = "not_run"
     report_path: str = ""
+    intervention_type: str = ""
+    intervention_reason: str = ""
 
 
 class PipelineLogger:
@@ -257,6 +261,8 @@ def write_run_manifest(
                     "changed_files": csv_json(result.changed_files) if result is not None else "",
                     "fix_artifact": result.fix_artifact if result is not None else "",
                     "report_path": result.report_path if result is not None else "",
+                    "intervention_type": result.intervention_type if result is not None else "",
+                    "intervention_reason": result.intervention_reason if result is not None else "",
                     "last_updated_utc": timestamp,
                 }
             )
@@ -710,6 +716,62 @@ def recommend_fix(category: str, fix_mode: str) -> tuple[str, bool, str]:
     if fix_mode == "safe" and category == "API_BEHAVIOR_MISMATCH":
         return "manual_followup", False, ""
     return "manual_followup", False, ""
+
+
+# Mapping from failure category to a short intervention reason code used by
+# derive_intervention_type.  Defined at module level to avoid repeated creation.
+_CATEGORY_REASON_MAP: dict[str, str] = {
+    "UNSUPPORTED_ON_NPU": "api_not_supported_on_npu",
+    "ENVIRONMENT_MISSING": "environment_setup_required",
+    "PYTORCH_BUG": "pytorch_source_bug",
+    "TORCH_NPU_BUG": "torch_npu_source_bug",
+    "OPERATOR_BUG": "operator_level_bug",
+    "API_BEHAVIOR_MISMATCH": "api_behavior_mismatch",
+    "FLAKY_OR_UNSTABLE": "flaky_or_unstable_test",
+    "INSUFFICIENT_COVERAGE": "insufficient_test_coverage",
+    "TEST_BUG": "test_bug_fix_failed",
+}
+
+
+def derive_intervention_type(result: ApiResult) -> tuple[str, str]:
+    """Return (intervention_type, intervention_reason) for a fully-processed result.
+
+    intervention_type values:
+      - "none"           : pipeline completed successfully; no action required.
+      - "codex_retry"    : Codex can plausibly address this without human help.
+      - "human_required" : needs human investigation and/or manual fix.
+
+    intervention_reason is a short snake_case code explaining the specific cause.
+    """
+    # All-clear: passed or successfully fixed by auto-fix
+    if result.final_status in {"pytest_passed", "fixed"}:
+        return "none", ""
+
+    # Test file was never generated/collected by Codex → regeneration is worth trying
+    if result.final_status == "review_failed" and result.pytest_outcome in {"not_generated", "not_collected"}:
+        return "codex_retry", "test_not_generated"
+
+    # Test has a TEST_BUG but Codex fix was not yet applied → auto-fix can be attempted
+    if result.failure_category == "TEST_BUG" and not result.fix_applied:
+        return "codex_retry", "test_bug_not_yet_fixed"
+
+    # Codex tried a fix but the rerun still failed → escalate to human
+    if result.fix_applied and result.rerun_status not in {"pytest_passed", "fixed", "not_run"}:
+        return "human_required", "fix_attempted_but_failed"
+
+    reason = _CATEGORY_REASON_MAP.get(result.failure_category, "unknown_failure")
+    return "human_required", reason
+
+
+def annotate_intervention_types(results: list[ApiResult]) -> list[ApiResult]:
+    """Set intervention_type / intervention_reason on every result in-place.
+
+    Modifies the list elements in-place and returns the same list for call-site
+    chaining convenience.
+    """
+    for result in results:
+        result.intervention_type, result.intervention_reason = derive_intervention_type(result)
+    return results
 
 
 def create_results(entries: list[ManifestEntry], execution: dict[str, object], run_dir: Path, fix_mode: str) -> list[ApiResult]:
@@ -1226,6 +1288,35 @@ def render_summary(
     else:
         lines.append("- None")
 
+    # --- Intervention summary (filter guide) ---
+    human_results = [r for r in results if r.intervention_type == "human_required"]
+    codex_results = [r for r in results if r.intervention_type == "codex_retry"]
+    lines.extend(["", "## Action Required: Human Intervention"])
+    lines.append(
+        "> Filter `summary_table.csv` on `Intervention Type == human_required` to get this list."
+    )
+    if human_results:
+        for result in human_results:
+            lines.append(
+                f"- `{result.canonical_name}`: reason=`{result.intervention_reason}` "
+                f"category=`{result.failure_category}`"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Action Required: Codex Retry"])
+    lines.append(
+        "> Filter `summary_table.csv` on `Intervention Type == codex_retry` to get this list."
+    )
+    if codex_results:
+        for result in codex_results:
+            lines.append(
+                f"- `{result.canonical_name}`: reason=`{result.intervention_reason}` "
+                f"category=`{result.failure_category}`"
+            )
+    else:
+        lines.append("- None")
+
     return "\n".join(lines) + "\n"
 
 
@@ -1244,7 +1335,10 @@ def write_summary(
     csv_path = run_dir / "summary_table.csv"
     with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["API Name", "Final Status", "Category", "Auto-Fix?", "Rerun Status", "Quick Summary"])
+        writer.writerow([
+            "API Name", "Final Status", "Category", "Auto-Fix?", "Rerun Status",
+            "Intervention Type", "Intervention Reason", "Quick Summary",
+        ])
         for result in results:
             short_summary = result.root_cause_summary.replace('\n', ' ')
             fixed_val = "Yes" if result.fix_applied else "No"
@@ -1254,7 +1348,9 @@ def write_summary(
                 result.failure_category,
                 fixed_val,
                 result.rerun_status,
-                short_summary
+                result.intervention_type,
+                result.intervention_reason,
+                short_summary,
             ])
 
 
@@ -1355,6 +1451,7 @@ def do_run(args: argparse.Namespace) -> int:
         results = merge_final_batch_results(target_entries, results, final_execution, run_dir)
     else:
         logger.log("stage=pytest rerun skip reason=no_fix_applied")
+    annotate_intervention_types(results)
     write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="final", results=results)
 
     write_results(results, run_dir)
