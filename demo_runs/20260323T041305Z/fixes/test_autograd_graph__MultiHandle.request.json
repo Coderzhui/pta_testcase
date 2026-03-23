@@ -1,0 +1,16 @@
+{
+  "canonical_name": "torch.autograd.graph._MultiHandle",
+  "file_name": "test_autograd_graph__MultiHandle.py",
+  "fix_mode": "tests",
+  "failure_category": "TEST_BUG",
+  "fix_recommendation": "adjust_test",
+  "final_status": "pytest_failed",
+  "pytest_outcome": "failed",
+  "allowed_scopes": [
+    "test/api_test/test_autograd_graph__MultiHandle.py"
+  ],
+  "root_cause_summary": "The test expects _MultiHandle(None) to fail in the constructor, but the constructor accepts None and TypeError appears only if remove() later iterates the handles.",
+  "failure_messages": [
+    "Failed: DID NOT RAISE <class 'TypeError'>\ndef test_multihandle_invalid_none_raises():\n        _require_npu()\n    \n>       with pytest.raises(TypeError):\nE       Failed: DID NOT RAISE <class 'TypeError'>\n\ntest/api_test/test_autograd_graph__MultiHandle.py:46: Failed"
+  ]
+}

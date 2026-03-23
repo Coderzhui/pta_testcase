@@ -1,0 +1,16 @@
+{
+  "canonical_name": "torch.nn.Module.named_parameters",
+  "file_name": "test_nn_Module_named_parameters.py",
+  "fix_mode": "tests",
+  "failure_category": "TEST_BUG",
+  "fix_recommendation": "adjust_test",
+  "final_status": "pytest_failed",
+  "pytest_outcome": "failed",
+  "allowed_scopes": [
+    "test/api_test/test_nn_Module_named_parameters.py"
+  ],
+  "root_cause_summary": "The invalid-self test is too strict: calling the unbound method with a string deterministically raises AttributeError from self._named_members, not TypeError.",
+  "failure_messages": [
+    "AttributeError: 'str' object has no attribute '_named_members'\ndef test_module_named_parameters_invalid_self_raises():\n        _require_npu()\n    \n        with pytest.raises(TypeError):\n>           list(torch.nn.Module.named_parameters(\"bad\"))\n\ntest/api_test/test_nn_Module_named_parameters.py:53: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = 'bad', prefix = '', recurse = True, remove_duplicate = True\n\n    def named_parameters(\n        self, prefix: str = \"\", recurse: bool = True, remove_duplicate: bool = True\n    ) -> Iterator[tuple[str, Parameter]]:\n        r\"\"\"Return an iterator over module parameters, yielding both the name of the parameter as well as the parameter itself.\n    \n        Args:\n            prefix (str): prefix to prepend to all parameter names.\n            recurse (bool): if True, then yields parameters of this module\n                and all submodules. Otherwise, yields only parameters that\n                are direct members of this module.\n            remove_duplicate (bool, optional): whether to remove the duplicated\n                parameters in the result. Defaults to True.\n    \n        Yields:\n            (str, Parameter): Tuple containing the name and parameter\n    \n        Example::\n    \n            >>> # xdoctest: +SKIP(\"undefined vars\")\n            >>> for name, param in self.named_parameters():\n            >>>     if name in ['bias']:\n            >>>         print(param.size())\n    \n        \"\"\"\n>       gen = self._named_members(\n              ^^^^^^^^^^^^^^^^^^^\n            lambda module: module._parameters.items(),\n            prefix=prefix,\n            recurse=recurse,\n            remove_duplicate=remove_duplicate,\n        )\nE       AttributeError: 'str' object has no attribute '_named_members'\n\n/usr/local/python3.11.14/lib/python3.11/site-packages/torch/nn/modules/module.py:2669: AttributeError"
+  ]
+}

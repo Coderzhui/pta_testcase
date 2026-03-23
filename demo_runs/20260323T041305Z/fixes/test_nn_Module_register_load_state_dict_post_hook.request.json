@@ -1,0 +1,16 @@
+{
+  "canonical_name": "torch.nn.Module.register_load_state_dict_post_hook",
+  "file_name": "test_nn_Module_register_load_state_dict_post_hook.py",
+  "fix_mode": "tests",
+  "failure_category": "TEST_BUG",
+  "fix_recommendation": "adjust_test",
+  "final_status": "pytest_failed",
+  "pytest_outcome": "failed",
+  "allowed_scopes": [
+    "test/api_test/test_nn_Module_register_load_state_dict_post_hook.py"
+  ],
+  "root_cause_summary": "The test expects register_load_state_dict_post_hook(None) to fail during registration, but current PyTorch stores None and raises TypeError only when load_state_dict later invokes the hook.",
+  "failure_messages": [
+    "Failed: DID NOT RAISE <class 'TypeError'>\ndef test_register_load_state_dict_post_hook_invalid_hook_raises():\n        _require_npu()\n    \n>       with pytest.raises(TypeError):\nE       Failed: DID NOT RAISE <class 'TypeError'>\n\ntest/api_test/test_nn_Module_register_load_state_dict_post_hook.py:58: Failed"
+  ]
+}

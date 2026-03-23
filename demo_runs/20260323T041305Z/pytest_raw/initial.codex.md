@@ -1,0 +1,3 @@
+`initial` pytest 已执行完成，pytest return code: `1`。
+
+产物路径：`/home/l00913161/projects/pta_testcase/runs/20260323T041305Z/pytest_raw/initial.command.txt`，`/home/l00913161/projects/pta_testcase/runs/20260323T041305Z/pytest_raw/initial.stdout.log`，`/home/l00913161/projects/pta_testcase/runs/20260323T041305Z/pytest_raw/initial.stderr.log`，`/home/l00913161/projects/pta_testcase/runs/20260323T041305Z/pytest_raw/initial_junit.xml`，`/home/l00913161/projects/pta_testcase/runs/20260323T041305Z/pytest_raw/initial.returncode.txt`。

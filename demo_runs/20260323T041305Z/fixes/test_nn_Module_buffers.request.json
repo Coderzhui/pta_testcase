@@ -1,0 +1,16 @@
+{
+  "canonical_name": "torch.nn.Module.buffers",
+  "file_name": "test_nn_Module_buffers.py",
+  "fix_mode": "tests",
+  "failure_category": "TEST_BUG",
+  "fix_recommendation": "adjust_test",
+  "final_status": "pytest_failed",
+  "pytest_outcome": "failed",
+  "allowed_scopes": [
+    "test/api_test/test_nn_Module_buffers.py"
+  ],
+  "root_cause_summary": "The invalid-self test is too strict: calling the unbound method with a string deterministically raises AttributeError from self.named_buffers, not TypeError.",
+  "failure_messages": [
+    "AttributeError: 'str' object has no attribute 'named_buffers'\ndef test_module_buffers_invalid_self_raises():\n        _require_npu()\n    \n        with pytest.raises(TypeError):\n>           list(torch.nn.Module.buffers(\"bad\"))\n\ntest/api_test/test_nn_Module_buffers.py:53: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = 'bad', recurse = True\n\n    def buffers(self, recurse: bool = True) -> Iterator[Tensor]:\n        r\"\"\"Return an iterator over module buffers.\n    \n        Args:\n            recurse (bool): if True, then yields buffers of this module\n                and all submodules. Otherwise, yields only buffers that\n                are direct members of this module.\n    \n        Yields:\n            torch.Tensor: module buffer\n    \n        Example::\n    \n            >>> # xdoctest: +SKIP(\"undefined vars\")\n            >>> for buf in model.buffers():\n            >>>     print(type(buf), buf.size())\n            <class 'torch.Tensor'> (20L,)\n            <class 'torch.Tensor'> (20L, 1L, 5L, 5L)\n    \n        \"\"\"\n>       for _, buf in self.named_buffers(recurse=recurse):\n                      ^^^^^^^^^^^^^^^^^^\nE       AttributeError: 'str' object has no attribute 'named_buffers'\n\n/usr/local/python3.11.14/lib/python3.11/site-packages/torch/nn/modules/module.py:2697: AttributeError"
+  ]
+}

@@ -1,0 +1,54 @@
+﻿API Name,Final Status,Category,Auto-Fix?,Rerun Status,Quick Summary
+Tensor.new_empty,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+Tensor.new_zeros,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+Tensor.register_hook,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+Tensor.requires_grad,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+Tensor.untyped_storage,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.__future__.get_swap_module_params_on_conversion,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._sync,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.autograd.Variable._execution_engine.queue_callback,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.compiler.is_compiling,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.dtype,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.Event,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.library.impl,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.library.Library,pytest_failed,PYTORCH_BUG,No,not_run,"RuntimeError: !dispatch_key_.has_value() INTERNAL ASSERT FAILED at ""/pytorch/aten/src/ATen/core/library.cpp"":87, please report a bug to PyTorch. (Error occurred while processing TORCH_LIBRARY_FRAGMENT block at /dev/null:166) def test_library_construct_and_define_for_npu_dispatch():         _require_npu()              namespace = ""pta_test_library_ctor""         lib = torch.library.Library(namespace, ""DEF"") >       frag = torch.library.Library(namespace, ""FRAGMENT"", ""PrivateUse1"")                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  test/api_test/test_library_Library.py:34:  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   self = <[AttributeError(""'Library' object has no attribute 'kind'"") raised in repr()] Library object at 0xfffdd80a3190> ns = 'pta_test_library_ctor', kind = 'FRAGMENT', dispatch_key = 'PrivateUse1'      def __init__(self, ns, kind, dispatch_key=""""):         if kind not in (""IMPL"", ""DEF"", ""FRAGMENT""):             raise ValueError(""Unsupported kind: "", kind)              if ns in _reserved_namespaces and (kind == ""DEF"" or kind == ""FRAGMENT""):             raise ValueError(                 ns,                 "" is a reserved namespace. Please try creating a library with another name."",             )         if torch._running_with_deploy():             _library.utils.warn_deploy()             return              frame = traceback.extract_stack(limit=3)[0]         filename, lineno = frame.filename, frame.lineno >       self.m: Optional[Any] = torch._C._dispatch_library(             kind, ns, dispatch_key, filename, lineno         ) E       RuntimeError: !dispatch_key_.has_value() INTERNAL ASSERT FAILED at ""/pytorch/aten/src/ATen/core/library.cpp"":87, please report a bug to PyTorch. (Error occurred while processing TORCH_LIBRARY_FRAGMENT block at /dev/null:166)  /usr/local/python3.11.14/lib/python3.11/site-packages/torch/library.py:109: RuntimeError"
+torch.nn.Module.buffers,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.nn.Module.modules,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.nn.Module.named_modules,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.nn.Module.named_parameters,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.nn.Module.register_forward_hook,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.nn.Module.register_forward_pre_hook,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.nn.Module.register_load_state_dict_post_hook,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.utils._pytree.tree_flatten,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.utils._pytree.tree_map,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.utils._pytree.tree_unflatten,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.utils.swap_tensors,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.nn.Parameter.grad,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.nn.Parameter.device,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.nn.Parameter.device.type,analyzed,UNKNOWN,No,not_run,No explicit failure detail was captured.
+torch.nn.Parameter.is_contiguous,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.nn.Parameter.ndim,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.nn.Parameter.size,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.nn.Parameter.stride,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.nn.Parameter.dtype,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.nn.Parameter.itemsize,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.autograd._unsafe_preserve_version_counter,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.
+torch.library,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._dynamo.compiled_autograd.compiled_autograd_enabled,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._dynamo.compiled_autograd.compiled_autograd_enabled_force_eager,analyzed,UNKNOWN,No,not_run,No explicit failure detail was captured.
+torch._dynamo.compiled_autograd.in_compiled_autograd_region,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._running_with_deploy,pytest_passed,NONE,No,not_run,`torch._running_with_deploy` 返回进程部署状态，不存在可验证的 NPU 设备语义。 /home/l00913161/projects/pta_testcase/test/api_test/test__running_with_deploy.py:31: `torch._running_with_deploy` 返回进程部署状态，不存在可验证的 NPU 设备语义。
+torch.utils._python_dispatch.is_traceable_wrapper_subclass,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._dynamo.comptime.comptime.print,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._dynamo.config,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._dynamo.config.skip_fsdp_hooks,analyzed,UNKNOWN,No,not_run,No explicit failure detail was captured.
+torch._C.DispatchKey.Functionalize,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._C.DispatchKeySet,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._C._ExcludeDispatchKeyGuard,pytest_passed,NONE,No,not_run,当前环境缺少稳定的 NPU dispatch 可观测路径，无法可靠验证 _ExcludeDispatchKeyGuard 的正常语义。 /home/l00913161/projects/pta_testcase/test/api_test/test__C__ExcludeDispatchKeyGuard.py:31: 当前环境缺少稳定的 NPU dispatch 可观测路径，无法可靠验证 _ExcludeDispatchKeyGuard 的正常语义。
+torch._from_functional_tensor,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._prims_common.make_contiguous_strides_for,pytest_passed,NONE,No,not_run,`make_contiguous_strides_for` 只处理 shape，不存在可验证的 NPU 设备语义。 /home/l00913161/projects/pta_testcase/test/api_test/test__prims_common_make_contiguous_strides_for.py:31: `make_contiguous_strides_for` 只处理 shape，不存在可验证的 NPU 设备语义。
+torch.fx.node.has_side_effect,skipped,UNSUPPORTED_ON_NPU,No,not_run,`torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。 /home/l00913161/projects/pta_testcase/test/api_test/test_fx_node_has_side_effect.py:31: `torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
+torch.nn.Module.__setattr__,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch.nn.Module._parameters,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
+torch._logging.warning_once,pytest_passed,NONE,No,not_run,`torch._logging.warning_once` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。 /home/l00913161/projects/pta_testcase/test/api_test/test__logging_warning_once.py:31: `torch._logging.warning_once` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
+torch.autograd.graph._MultiHandle,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.

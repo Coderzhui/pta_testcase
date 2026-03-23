@@ -1,0 +1,16 @@
+{
+  "canonical_name": "torch.autograd._unsafe_preserve_version_counter",
+  "file_name": "test_autograd__unsafe_preserve_version_counter.py",
+  "fix_mode": "tests",
+  "failure_category": "TEST_BUG",
+  "fix_recommendation": "adjust_test",
+  "final_status": "pytest_failed",
+  "pytest_outcome": "failed",
+  "allowed_scopes": [
+    "test/api_test/test_autograd__unsafe_preserve_version_counter.py"
+  ],
+  "root_cause_summary": "The invalid-input test is too strict: passing None hits the constructor assertion that tensors must be a tuple and raises AssertionError, while the test only accepts TypeError or RuntimeError.",
+  "failure_messages": [
+    "AssertionError\ndef test_unsafe_preserve_version_counter_invalid_none_raises():\n        _require_npu()\n    \n        with pytest.raises((TypeError, RuntimeError)):\n>           with torch.autograd._unsafe_preserve_version_counter(None):\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\ntest/api_test/test_autograd__unsafe_preserve_version_counter.py:45: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <torch.autograd.grad_mode._unsafe_preserve_version_counter object at 0xfffd7db86250>\ntensors = None\n\n    def __init__(self, tensors: Union[torch.Tensor, tuple[torch.Tensor, ...]]) -> None:\n        self.tensors = (tensors,) if isinstance(tensors, torch.Tensor) else tensors\n>       assert isinstance(self.tensors, tuple)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       AssertionError\n\n/usr/local/python3.11.14/lib/python3.11/site-packages/torch/autograd/grad_mode.py:391: AssertionError"
+  ]
+}

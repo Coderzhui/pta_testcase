@@ -1,0 +1,16 @@
+{
+  "canonical_name": "torch.nn.Module.named_modules",
+  "file_name": "test_nn_Module_named_modules.py",
+  "fix_mode": "tests",
+  "failure_category": "TEST_BUG",
+  "fix_recommendation": "adjust_test",
+  "final_status": "pytest_failed",
+  "pytest_outcome": "failed",
+  "allowed_scopes": [
+    "test/api_test/test_nn_Module_named_modules.py"
+  ],
+  "root_cause_summary": "The invalid-self test is too strict: calling the unbound method with a string deterministically raises AttributeError when the implementation accesses self._modules, not TypeError.",
+  "failure_messages": [
+    "AttributeError: 'str' object has no attribute '_modules'\ndef test_module_named_modules_invalid_self_raises():\n        _require_npu()\n    \n        with pytest.raises(TypeError):\n>           list(torch.nn.Module.named_modules(\"bad\"))\n\ntest/api_test/test_nn_Module_named_modules.py:51: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = 'bad', memo = {'bad'}, prefix = '', remove_duplicate = True\n\n    def named_modules(\n        self,\n        memo: Optional[set[\"Module\"]] = None,\n        prefix: str = \"\",\n        remove_duplicate: bool = True,\n    ):\n        r\"\"\"Return an iterator over all modules in the network, yielding both the name of the module as well as the module itself.\n    \n        Args:\n            memo: a memo to store the set of modules already added to the result\n            prefix: a prefix that will be added to the name of the module\n            remove_duplicate: whether to remove the duplicated module instances in the result\n                or not\n    \n        Yields:\n            (str, Module): Tuple of name and module\n    \n        Note:\n            Duplicate modules are returned only once. In the following\n            example, ``l`` will be returned only once.\n    \n        Example::\n    \n            >>> l = nn.Linear(2, 2)\n            >>> net = nn.Sequential(l, l)\n            >>> for idx, m in enumerate(net.named_modules()):\n            ...     print(idx, '->', m)\n    \n            0 -> ('', Sequential(\n              (0): Linear(in_features=2, out_features=2, bias=True)\n              (1): Linear(in_features=2, out_features=2, bias=True)\n            ))\n            1 -> ('0', Linear(in_features=2, out_features=2, bias=True))\n    \n        \"\"\"\n        if memo is None:\n            memo = set()\n        if self not in memo:\n            if remove_duplicate:\n                memo.add(self)\n            yield prefix, self\n>           for name, module in self._modules.items():\n                                ^^^^^^^^^^^^^\nE           AttributeError: 'str' object has no attribute '_modules'\n\n/usr/local/python3.11.14/lib/python3.11/site-packages/torch/nn/modules/module.py:2828: AttributeError"
+  ]
+}

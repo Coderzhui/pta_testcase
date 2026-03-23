@@ -1,0 +1,3 @@
+按 `single-api-fix` 流程完成了这次单 API 修复，只修改了允许范围内的 [test/api_test/test_nn_Module_named_modules.py](/home/l00913161/projects/pta_testcase/test/api_test/test_nn_Module_named_modules.py#L47)。具体是把 `test_module_named_modules_invalid_self_raises` 的异常断言从 `TypeError` 调整为 `AttributeError`，与当前 `torch.nn.Module.named_modules("bad")` 实际访问 `self._modules` 后的失败行为一致。
+
+未运行 `pytest`，符合请求约束。剩余风险是：如果后续上游实现改成显式类型校验，这里的异常类型可能需要再同步调整。

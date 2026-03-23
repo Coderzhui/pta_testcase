@@ -1,0 +1,16 @@
+{
+  "canonical_name": "torch.utils.swap_tensors",
+  "file_name": "test_utils_swap_tensors.py",
+  "fix_mode": "tests",
+  "failure_category": "TEST_BUG",
+  "fix_recommendation": "adjust_test",
+  "final_status": "pytest_failed",
+  "pytest_outcome": "failed",
+  "allowed_scopes": [
+    "test/api_test/test_utils_swap_tensors.py"
+  ],
+  "root_cause_summary": "The invalid-input test is too strict: passing a non-Tensor reaches t._use_count() and raises AttributeError, while the test only accepts TypeError or RuntimeError.",
+  "failure_messages": [
+    "AttributeError: 'int' object has no attribute '_use_count'\ndef test_swap_tensors_invalid_input_raises():\n        _require_npu()\n    \n        with pytest.raises((TypeError, RuntimeError)):\n>           torch.utils.swap_tensors(torch.ones(1, device=\"npu\"), 1)\n\ntest/api_test/test_utils_swap_tensors.py:46: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n/usr/local/python3.11.14/lib/python3.11/site-packages/torch/utils/__init__.py:92: in swap_tensors\n    check_use_count(t2, \"t2\")\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nt = 1, name = 't2'\n\n    def check_use_count(t, name=\"t1\"):\n>       use_count = t._use_count()\n                    ^^^^^^^^^^^^\nE       AttributeError: 'int' object has no attribute '_use_count'\n\n/usr/local/python3.11.14/lib/python3.11/site-packages/torch/utils/__init__.py:75: AttributeError"
+  ]
+}
