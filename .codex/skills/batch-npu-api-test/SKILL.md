@@ -20,6 +20,7 @@ description:
 3. 等待全部 generator 完成，收集生成结果。
 4. 对新生成或修改过的测试文件启动 api_test_reviewer 子代理并行审查。
 5. 对 reviewer 判定为不通过的文件，进行最小修复：
+   - 启动 api_test_fixer 子代理处理单文件修复
    - 只修复失败项
    - 不重写已通过文件
    - 不改动 test/api_test 之外的业务代码
@@ -27,7 +28,7 @@ description:
 7. 输出最终汇总：
    - 成功生成并通过的 API
    - 经修复后通过的 API
-   - 仍失败 / skip / xfail 的 API 及原因
+   - 仍失败 / skip 的 API 及原因
    - 明显未覆盖项
 
 约束：
@@ -36,4 +37,6 @@ description:
 - 测试必须运行在 NPU 上，使用 torch_npu
 - 关注功能行为和接口覆盖，不做数值精度校验
 - 异常场景必须使用 pytest.raises
+- 禁止使用 pytest.xfail
+- 只有环境缺失或当前 NPU 后端明确不支持时才允许 pytest.skip
 - 文件头注释必须写明测试目的、API 名称、覆盖入参

@@ -105,6 +105,7 @@ python -m scripts.pipeline run --input apis.txt --fix-mode tests
 
 优先看：
 
+- `runs/<run_id>/manifest.csv`
 - `runs/<run_id>/summary.md`
 - `runs/<run_id>/analysis_summary.md`
 - `runs/<run_id>/results.csv`
@@ -186,7 +187,7 @@ runs/20260321T091734Z/
 
 | 文件 | 说明 |
 | --- | --- |
-| `manifest.csv` | 本次运行使用的 manifest 快照 |
+| `manifest.csv` | 本次运行的实时进度表；会随着生成、执行、分析、修复和最终结果持续回写 |
 | `pipeline.log` | 外层 pipeline 的阶段日志 |
 | `generation_summary.md` | Codex 生成阶段摘要 |
 | `pytest_raw/*.command.txt` | pytest 原始命令 |
@@ -201,6 +202,7 @@ runs/20260321T091734Z/
 | `results.json` | 结构化最终结果 |
 | `results.csv` | 表格友好的最终结果 |
 | `summary.md` | 最终批次摘要 |
+| `fixes/*.request.json` | 单 API 修复请求快照 |
 | `fixes/*.md` | 单 API 修复摘要 |
 | `fixes/*.stdout.log` | 修复阶段日志 |
 | `fixes/*.stderr.log` | 修复阶段错误日志 |
@@ -223,7 +225,7 @@ runs/20260321T091734Z/
 默认修复策略：
 
 - `TEST_BUG`
-  默认可自动修复
+  默认可自动修复；包括测试代码错误以及使用 `pytest.xfail` 这类策略违规
 - `ENVIRONMENT_MISSING` / `UNSUPPORTED_ON_NPU` / `OPERATOR_BUG` / `FLAKY_OR_UNSTABLE` / `INSUFFICIENT_COVERAGE`
   默认只报告，不自动改
 - `PYTORCH_BUG` / `TORCH_NPU_BUG`

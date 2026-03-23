@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 import shlex
 import subprocess
 import sys
@@ -20,6 +19,31 @@ ROOT = Path(__file__).resolve().parent.parent
 TEST_DIR = ROOT / "test" / "api_test"
 RUNS_DIR = ROOT / "runs"
 DEFAULT_MANIFEST_FIELDS = ["raw_api_name", "canonical_name", "file_name", "status", "notes"]
+RUN_MANIFEST_FIELDS = DEFAULT_MANIFEST_FIELDS + [
+    "selected_for_run",
+    "run_phase",
+    "stage",
+    "test_file_exists",
+    "final_status",
+    "pytest_outcome",
+    "failure_category",
+    "root_cause_summary",
+    "tests_total",
+    "passed_count",
+    "skipped_count",
+    "xfailed_count",
+    "failed_count",
+    "error_count",
+    "fix_recommendation",
+    "auto_fixable",
+    "fix_applied",
+    "fix_target",
+    "rerun_status",
+    "changed_files",
+    "fix_artifact",
+    "report_path",
+    "last_updated_utc",
+]
 FIX_MODES = {"off", "tests", "safe"}
 RUN_ENGINES = {"local", "codex"}
 ANALYSIS_ENGINES = {"heuristic", "codex"}
@@ -158,6 +182,86 @@ def write_manifest(entries: Iterable[ManifestEntry], path: Path) -> None:
             )
 
 
+def csv_bool(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def csv_json(value: object) -> str:
+    if value in ("", None, [], {}):
+        return ""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def derive_run_manifest_status(
+    entry: ManifestEntry,
+    *,
+    selected: bool,
+    run_phase: str,
+    result: ApiResult | None,
+) -> str:
+    if result is not None:
+        return result.final_status
+    if not selected:
+        return entry.status
+    if run_phase == "queued":
+        return entry.status
+    if run_phase in {"generated", "reused_existing"}:
+        return "generated" if entry.test_path.exists() else "generation_missing"
+    return entry.status
+
+
+def write_run_manifest(
+    entries: list[ManifestEntry],
+    path: Path,
+    *,
+    selected_entries: list[ManifestEntry],
+    run_phase: str,
+    results: list[ApiResult] | None = None,
+) -> None:
+    selected_names = {entry.canonical_name for entry in selected_entries}
+    results_by_name = {result.canonical_name: result for result in (results or [])}
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=RUN_MANIFEST_FIELDS)
+        writer.writeheader()
+        for entry in entries:
+            selected = entry.canonical_name in selected_names
+            result = results_by_name.get(entry.canonical_name)
+            writer.writerow(
+                {
+                    "raw_api_name": entry.raw_api_name,
+                    "canonical_name": entry.canonical_name,
+                    "file_name": entry.file_name,
+                    "status": derive_run_manifest_status(entry, selected=selected, run_phase=run_phase, result=result),
+                    "notes": entry.notes,
+                    "selected_for_run": csv_bool(selected),
+                    "run_phase": run_phase,
+                    "stage": result.stage if result is not None else ("manifest" if selected else "deferred"),
+                    "test_file_exists": csv_bool(entry.test_path.exists()),
+                    "final_status": result.final_status if result is not None else "",
+                    "pytest_outcome": result.pytest_outcome if result is not None else "",
+                    "failure_category": result.failure_category if result is not None else "",
+                    "root_cause_summary": result.root_cause_summary if result is not None else "",
+                    "tests_total": result.tests_total if result is not None else "",
+                    "passed_count": result.passed_count if result is not None else "",
+                    "skipped_count": result.skipped_count if result is not None else "",
+                    "xfailed_count": result.xfailed_count if result is not None else "",
+                    "failed_count": result.failed_count if result is not None else "",
+                    "error_count": result.error_count if result is not None else "",
+                    "fix_recommendation": result.fix_recommendation if result is not None else "",
+                    "auto_fixable": csv_bool(result.auto_fixable) if result is not None else "",
+                    "fix_applied": csv_bool(result.fix_applied) if result is not None else "",
+                    "fix_target": result.fix_target if result is not None else "",
+                    "rerun_status": result.rerun_status if result is not None else "",
+                    "changed_files": csv_json(result.changed_files) if result is not None else "",
+                    "fix_artifact": result.fix_artifact if result is not None else "",
+                    "report_path": result.report_path if result is not None else "",
+                    "last_updated_utc": timestamp,
+                }
+            )
+
+
 def utc_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -261,7 +365,7 @@ def codex_prompt_for_generation(manifest_path: Path, run_dir: Path, max_workers:
         要求：
         1. 只读取 CSV 中 status=pending 的 API。
         2. 启动 generator/reviewer 并行生成和审查测试文件。
-        3. 可以对测试文件做最小修复，但只允许修改 test/api_test/ 下 CSV 对应的目标文件。
+        3. 可以对测试文件做最小修复，但只允许修改 test/api_test/ 下 CSV 对应的目标文件，且禁止使用 pytest.xfail。
         4. 不要运行 pytest；外层 pipeline 会统一执行和分析。
         5. 不要修改其他目录。
         6. 最终回复写入简洁的生成摘要，包含触达的文件和静态阻塞项。
@@ -550,16 +654,14 @@ def derive_final_status(bucket: dict[str, object], entry: ManifestEntry) -> tupl
     passed = int(bucket["passed_count"])
     skipped = int(bucket["skipped_count"])
     xfailed = int(bucket["xfailed_count"])
-    if failed or errors:
+    if failed or errors or xfailed:
+        if xfailed and not failed and not errors:
+            return "pytest_failed", "xfailed_not_allowed"
         return "pytest_failed", "failed"
     if passed:
-        if skipped and not xfailed:
+        if skipped:
             return "pytest_passed", "passed_with_skips"
-        if xfailed:
-            return "pytest_passed", "passed_with_xfails"
         return "pytest_passed", "passed"
-    if xfailed:
-        return "xfailed", "xfailed"
     if skipped:
         return "skipped", "skipped"
     return "analyzed", "no_tests_recorded"
@@ -569,11 +671,13 @@ def detect_category(text: str, final_status: str) -> str:
     lowered = text.lower()
     if final_status in {"pytest_passed", "fixed"}:
         return "NONE"
+    if "pytest.xfail" in lowered or "xfail" in lowered:
+        return "TEST_BUG"
     if any(token in lowered for token in ["torch_npu import failed", "no module named 'torch_npu'", "npu is not available"]):
         return "ENVIRONMENT_MISSING"
     if any(token in lowered for token in ["not supported by this npu backend", "unsupported on npu", "does not support", "not exposed in this build", "dispatchkey.npu"]):
         return "UNSUPPORTED_ON_NPU"
-    if any(token in lowered for token in ["xfail", "not reliable", "unstable", "flaky"]):
+    if any(token in lowered for token in ["not reliable", "unstable", "flaky"]):
         return "FLAKY_OR_UNSTABLE"
     if any(token in lowered for token in ["aclnn", "aclop", "op api", "opapi", "op-plugin", "kernel", "operator"]):
         return "OPERATOR_BUG"
@@ -585,7 +689,7 @@ def detect_category(text: str, final_status: str) -> str:
         return "TEST_BUG"
     if "coverage" in lowered and any(token in lowered for token in ["missing", "insufficient", "uncovered"]):
         return "INSUFFICIENT_COVERAGE"
-    if final_status in {"skipped", "xfailed"}:
+    if final_status == "skipped":
         return "UNSUPPORTED_ON_NPU"
     if final_status == "pytest_failed":
         return "API_BEHAVIOR_MISMATCH"
@@ -649,7 +753,7 @@ def create_results(entries: list[ManifestEntry], execution: dict[str, object], r
 def build_analysis_inputs(results: list[ApiResult], run_dir: Path, execution: dict[str, object]) -> Path:
     analysis_items = []
     for result in results:
-        if result.final_status not in {"pytest_failed", "skipped", "xfailed", "review_failed"}:
+        if result.final_status not in {"pytest_failed", "skipped", "review_failed"}:
             continue
         analysis_items.append(
             {
@@ -692,7 +796,7 @@ def codex_prompt_for_analysis(analysis_input_path: Path, triage_path: Path) -> s
         - 分类规则：{relative_to_root(ROOT / 'docs' / 'failure_taxonomy.md')}
 
         任务：
-        1. 读取 analysis_inputs.json 中的所有失败/skip/xfail/review_failed API。
+        1. 读取 analysis_inputs.json 中的所有失败/skip/review_failed API。
         2. 必要时查看对应测试文件和 pytest 日志。
         3. 为每个 API 产出一条 JSON 记录，写入 {relative_to_root(triage_path)}。
 
@@ -704,9 +808,10 @@ def codex_prompt_for_analysis(analysis_input_path: Path, triage_path: Path) -> s
         约束：
         1. failure_category 只能取这些值：{categories}
         2. 只有确定是 test/api_test 下用例代码问题时，才标记为 TEST_BUG。
-        3. 环境问题、PyTorch 代码问题、torch_npu/ascend-pytorch 问题、底层算子问题要区分开。
-        4. 不明确时宁可保守标成 UNKNOWN 或 API_BEHAVIOR_MISMATCH，不要编造证据。
-        5. 最终回复只写简洁分析总结。
+        3. 如果看到 pytest.xfail 或 xfail 痕迹，把它视为测试策略违规，优先标记为 TEST_BUG。
+        4. 环境问题、PyTorch 代码问题、torch_npu/ascend-pytorch 问题、底层算子问题要区分开。
+        5. 不明确时宁可保守标成 UNKNOWN 或 API_BEHAVIOR_MISMATCH，不要编造证据。
+        6. 最终回复只写简洁分析总结。
         """
     )
 
@@ -747,7 +852,7 @@ def render_analysis_summary(results: list[ApiResult], run_dir: Path, fix_mode: s
         "",
         "## Auto-Fix Candidates",
     ]
-    candidates = [result for result in results if result.auto_fixable and result.final_status in {"pytest_failed", "skipped", "xfailed", "review_failed"}]
+    candidates = [result for result in results if result.auto_fixable and result.final_status in {"pytest_failed", "skipped", "review_failed"}]
     if candidates:
         for result in candidates:
             lines.append(
@@ -758,7 +863,7 @@ def render_analysis_summary(results: list[ApiResult], run_dir: Path, fix_mode: s
         lines.append("- None")
 
     lines.extend(["", "## Report-Only Failures"])
-    report_only = [result for result in results if not result.auto_fixable and result.final_status in {"pytest_failed", "skipped", "xfailed", "review_failed"}]
+    report_only = [result for result in results if not result.auto_fixable and result.final_status in {"pytest_failed", "skipped", "review_failed"}]
     if report_only:
         for result in report_only:
             lines.append(
@@ -782,7 +887,7 @@ def run_analysis_stage(
     analysis_input_path = build_analysis_inputs(results, run_dir, execution)
     triage_path = run_dir / "analysis_triage.json"
     codex_notes_path = run_dir / "analysis_codex.md"
-    failing_results = [result for result in results if result.final_status in {"pytest_failed", "skipped", "xfailed", "review_failed"}]
+    failing_results = [result for result in results if result.final_status in {"pytest_failed", "skipped", "review_failed"}]
     if logger is not None:
         logger.log(
             "stage=analysis start "
@@ -889,38 +994,38 @@ def snapshot_newer_files(paths: list[Path], marker: Path) -> list[str]:
     return sorted(set(changed))
 
 
-def fix_prompt(result: ApiResult, run_dir: Path, fix_mode: str) -> str:
+def build_fix_request(result: ApiResult, fix_mode: str) -> dict[str, object]:
     allowed_scopes = [f"test/api_test/{result.file_name}"]
     if fix_mode == "safe":
         allowed_scopes.extend(["pytorch/", "ascend-pytorch/"])
-    category = result.failure_category
-    summary = result.root_cause_summary.strip()
-    failure_blob = "\n\n".join(result.failure_messages[:3]).strip() or "(no extra failure messages captured)"
+    return {
+        "canonical_name": result.canonical_name,
+        "file_name": result.file_name,
+        "fix_mode": fix_mode,
+        "failure_category": result.failure_category,
+        "fix_recommendation": result.fix_recommendation,
+        "final_status": result.final_status,
+        "pytest_outcome": result.pytest_outcome,
+        "allowed_scopes": allowed_scopes,
+        "root_cause_summary": result.root_cause_summary.strip(),
+        "failure_messages": result.failure_messages[:3],
+    }
+
+
+def codex_prompt_for_fix(request_path: Path) -> str:
     return textwrap.dedent(
         f"""\
-        修复一次单 API 失败，不要等待额外确认。
+        使用 single-api-fix skill。
 
-        API: {result.canonical_name}
-        测试文件: test/api_test/{result.file_name}
-        分类: {category}
-        建议动作: {result.fix_recommendation}
-        当前 pytest 状态: {result.final_status} / {result.pytest_outcome}
+        处理修复请求文件：{relative_to_root(request_path)}
 
-        允许修改范围：
-        {os.linesep.join(f"- {scope}" for scope in allowed_scopes)}
-
-        失败摘要：
-        {summary}
-
-        失败细节：
-        {failure_blob}
-
-        修复要求：
-        1. 只做最小修复，禁止触达未授权文件。
-        2. 如果问题本质是当前环境/后端不支持，请优先在测试中使用 pytest.skip 或 pytest.xfail，并写清楚原因。
-        3. 只有在 fix mode 为 safe 且确实是低风险局部问题时，才允许修改 pytorch/ 或 ascend-pytorch/。
-        4. 不要做重构，不要扩散改动。
-        5. 外层 pipeline 会自动 rerun pytest，因此你只需要完成修复并在最终回复里说明改了什么。
+        执行修复阶段，不要等待额外确认。
+        要求：
+        1. 只修复该请求对应的单个 API。
+        2. 严格遵守请求文件中的 allowed_scopes。
+        3. 禁止使用 pytest.xfail。
+        4. 不要运行 pytest；外层 pipeline 会自动回归验证。
+        5. 最终回复写简洁修复摘要。
         """
     )
 
@@ -942,7 +1047,9 @@ def run_fix_attempt(
     marker = run_dir / "fixes" / f"{Path(result.file_name).stem}.before"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
-    prompt = fix_prompt(result, run_dir, fix_mode)
+    request_path = run_dir / "fixes" / f"{Path(result.file_name).stem}.request.json"
+    write_json(request_path, build_fix_request(result, fix_mode))
+    prompt = codex_prompt_for_fix(request_path)
     summary_path = run_dir / "fixes" / f"{Path(result.file_name).stem}.md"
     completed = run_codex_exec(
         prompt,
@@ -1008,13 +1115,13 @@ def apply_auto_fixes(
     candidates = [
         result
         for result in results
-        if result.final_status in {"pytest_failed", "skipped", "xfailed", "review_failed"} and result.auto_fixable
+        if result.final_status in {"pytest_failed", "skipped", "review_failed"} and result.auto_fixable
     ]
     if logger is not None:
         logger.log(f"stage=fix queue candidates={len(candidates)} fix_mode={fix_mode}")
     updated: list[ApiResult] = []
     for result in results:
-        if result.final_status not in {"pytest_failed", "skipped", "xfailed", "review_failed"} or not result.auto_fixable:
+        if result.final_status not in {"pytest_failed", "skipped", "review_failed"} or not result.auto_fixable:
             updated.append(result)
             continue
         updated.append(run_fix_attempt(result, run_dir, fix_mode, run_engine, logger))
@@ -1061,7 +1168,6 @@ def render_summary(
     fixed = [result for result in results if result.final_status == "fixed"]
     failed = [result for result in results if result.final_status in {"pytest_failed", "review_failed"}]
     skipped = [result for result in results if result.final_status == "skipped"]
-    xfailed = [result for result in results if result.final_status == "xfailed"]
     passed = [result for result in results if result.final_status in {"pytest_passed", "fixed"}]
     for result in results:
         counts[result.final_status] = counts.get(result.final_status, 0) + 1
@@ -1071,12 +1177,13 @@ def render_summary(
         f"# Pipeline Summary: {run_dir.name}",
         "",
         f"- Input: `{relative_to_root(input_path.resolve())}`",
-        f"- Manifest snapshot: `{relative_to_root(manifest_path)}`",
+        f"- Manifest progress CSV: `{relative_to_root(manifest_path)}`",
         f"- Fix mode: `{fix_mode}`",
         f"- Command: `{final_command}`",
         f"- Total APIs: `{total}`",
         f"- Results JSON: `{relative_to_root(run_dir / 'results.json')}`",
         f"- Results CSV: `{relative_to_root(run_dir / 'results.csv')}`",
+        f"- Summary Table CSV: `{relative_to_root(run_dir / 'summary_table.csv')}`",
         f"- Generation Summary: `{relative_to_root(run_dir / 'generation_summary.md')}`",
         f"- Analysis Summary: `{relative_to_root(run_dir / 'analysis_summary.md')}`",
         "",
@@ -1106,9 +1213,9 @@ def render_summary(
     else:
         lines.append("- None")
 
-    lines.extend(["", "## Skipped / Xfailed"])
-    if skipped or xfailed:
-        for result in skipped + xfailed:
+    lines.extend(["", "## Skipped APIs"])
+    if skipped:
+        for result in skipped:
             lines.append(f"- `{result.canonical_name}`: `{result.final_status}`; {result.root_cause_summary or 'no summary'}")
     else:
         lines.append("- None")
@@ -1132,6 +1239,23 @@ def write_summary(
 ) -> None:
     summary = render_summary(results, run_dir, input_path, fix_mode, manifest_path, command)
     (run_dir / "summary.md").write_text(summary, encoding="utf-8")
+
+    # Generate the comprehensive CSV summary table
+    csv_path = run_dir / "summary_table.csv"
+    with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["API Name", "Final Status", "Category", "Auto-Fix?", "Rerun Status", "Quick Summary"])
+        for result in results:
+            short_summary = result.root_cause_summary.replace('\n', ' ')
+            fixed_val = "Yes" if result.fix_applied else "No"
+            writer.writerow([
+                result.canonical_name,
+                result.final_status,
+                result.failure_category,
+                fixed_val,
+                result.rerun_status,
+                short_summary
+            ])
 
 
 def select_target_entries(entries: list[ManifestEntry]) -> list[ManifestEntry]:
@@ -1182,6 +1306,7 @@ def do_run(args: argparse.Namespace) -> int:
     )
     entries, manifest_path = resolve_input_manifest(args.input, run_dir)
     target_entries = select_target_entries(entries)
+    write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="queued")
     logger.log(
         "manifest ready "
         f"entries={len(entries)} target_entries={len(target_entries)} "
@@ -1190,12 +1315,14 @@ def do_run(args: argparse.Namespace) -> int:
 
     if not args.skip_generate:
         run_generation_stage(manifest_path, run_dir, args.max_workers, logger)
+        write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="generated")
     else:
         (run_dir / "generation_summary.md").write_text(
             "Generation stage was skipped because --skip-generate was set.\n",
             encoding="utf-8",
         )
         logger.log("stage=generation skip reason=skip_generate")
+        write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="reused_existing")
 
     existing_entries = [entry for entry in target_entries if entry.test_path.exists()]
     missing_entries = [entry for entry in target_entries if not entry.test_path.exists()]
@@ -1215,9 +1342,12 @@ def do_run(args: argparse.Namespace) -> int:
             result.initial_failure_category = result.failure_category
             result.initial_root_cause_summary = result.root_cause_summary
             result.fix_recommendation, result.auto_fixable, result.fix_target = recommend_fix(result.failure_category, args.fix_mode)
+    write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="initial_pytest", results=results)
 
     results = run_analysis_stage(results, run_dir, execution, args.fix_mode, args.analysis_engine, logger)
+    write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="analysis", results=results)
     results = apply_auto_fixes(results, run_dir, args.fix_mode, args.run_engine, logger)
+    write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="fix", results=results)
     if any(result.fix_applied for result in results):
         rerun_files = [entry.test_path for entry in target_entries if entry.test_path.exists()]
         logger.log(f"stage=pytest rerun start files={len(rerun_files)}")
@@ -1225,6 +1355,7 @@ def do_run(args: argparse.Namespace) -> int:
         results = merge_final_batch_results(target_entries, results, final_execution, run_dir)
     else:
         logger.log("stage=pytest rerun skip reason=no_fix_applied")
+    write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="final", results=results)
 
     write_results(results, run_dir)
     command_parts = [sys.executable, "-m", "scripts.pipeline", "run", "--input", str(args.input), "--fix-mode", args.fix_mode]

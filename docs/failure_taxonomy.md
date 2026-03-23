@@ -20,7 +20,7 @@
 - `NONE`
   当前最终状态已通过，没有待处理失败。
 - `TEST_BUG`
-  问题主要在 `test/api_test/` 下的测试代码，例如参数构造错误、断言错误、异常预期错误、收集失败、文件未生成。
+  问题主要在 `test/api_test/` 下的测试代码，例如参数构造错误、断言错误、异常预期错误、收集失败、文件未生成，或使用 `pytest.xfail` 这类不允许的策略。
 - `ENVIRONMENT_MISSING`
   环境缺少 `torch_npu`、NPU 不可用、基础依赖未满足，或当前运行条件不成立。
 - `UNSUPPORTED_ON_NPU`

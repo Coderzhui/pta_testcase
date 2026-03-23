@@ -34,7 +34,8 @@
 - 不要求校验具体数值正确性
 
 ## Failure handling
-- 如果某个 API 在当前环境无法可靠构造最小可运行用例，使用 `pytest.skip` 或 `pytest.xfail`
+- 如果某个 API 在当前环境无法可靠构造最小可运行用例，使用 `pytest.skip`
+- 禁止使用 `pytest.xfail`
 - 必须写清楚原因
 - 不要伪造覆盖
 
