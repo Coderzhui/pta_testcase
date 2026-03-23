@@ -171,7 +171,7 @@ def load_manifest(path: Path) -> list[ManifestEntry]:
 
 def write_manifest(entries: Iterable[ManifestEntry], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=DEFAULT_MANIFEST_FIELDS)
         writer.writeheader()
         for entry in entries:
@@ -226,7 +226,7 @@ def write_run_manifest(
     results_by_name = {result.canonical_name: result for result in (results or [])}
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=RUN_MANIFEST_FIELDS)
         writer.writeheader()
         for entry in entries:
@@ -791,9 +791,9 @@ def create_results(entries: list[ManifestEntry], execution: dict[str, object], r
             final_status=final_status,
             pytest_outcome=pytest_outcome,
             failure_category=category,
-            root_cause_summary=message or "No explicit failure detail was captured.",
+            root_cause_summary=message or "未捕获到明确的失败详情。",
             initial_failure_category=category,
-            initial_root_cause_summary=message or "No explicit failure detail was captured.",
+            initial_root_cause_summary=message or "未捕获到明确的失败详情。",
             failure_messages=list(bucket["messages"]),
             tests_total=int(bucket["tests_total"]),
             passed_count=int(bucket["passed_count"]),
@@ -905,35 +905,35 @@ def load_analysis_triage(path: Path) -> dict[str, dict[str, str]]:
 
 def render_analysis_summary(results: list[ApiResult], run_dir: Path, fix_mode: str) -> str:
     lines = [
-        f"# Analysis Summary: {run_dir.name}",
+        f"# 分析摘要：{run_dir.name}",
         "",
-        f"- Fix mode: `{fix_mode}`",
-        f"- Inputs: `{relative_to_root(run_dir / 'analysis_inputs.json')}`",
-        f"- Triage JSON: `{relative_to_root(run_dir / 'analysis_triage.json')}`",
-        f"- Codex notes: `{relative_to_root(run_dir / 'analysis_codex.md')}`",
+        f"- 修复模式：`{fix_mode}`",
+        f"- 输入文件：`{relative_to_root(run_dir / 'analysis_inputs.json')}`",
+        f"- 分诊 JSON：`{relative_to_root(run_dir / 'analysis_triage.json')}`",
+        f"- Codex 备注：`{relative_to_root(run_dir / 'analysis_codex.md')}`",
         "",
-        "## Auto-Fix Candidates",
+        "## 可自动修复候选",
     ]
     candidates = [result for result in results if result.auto_fixable and result.final_status in {"pytest_failed", "skipped", "review_failed"}]
     if candidates:
         for result in candidates:
             lines.append(
                 f"- `{result.canonical_name}`: `{result.failure_category}` -> `{result.fix_recommendation}`; "
-                f"{result.root_cause_summary or 'no summary'}"
+                f"{result.root_cause_summary or '无摘要'}"
             )
     else:
-        lines.append("- None")
+        lines.append("- 无")
 
-    lines.extend(["", "## Report-Only Failures"])
+    lines.extend(["", "## 仅报告（不自动修复）失败"])
     report_only = [result for result in results if not result.auto_fixable and result.final_status in {"pytest_failed", "skipped", "review_failed"}]
     if report_only:
         for result in report_only:
             lines.append(
                 f"- `{result.canonical_name}`: `{result.failure_category}`; "
-                f"{result.root_cause_summary or 'no summary'}"
+                f"{result.root_cause_summary or '无摘要'}"
             )
     else:
-        lines.append("- None")
+        lines.append("- 无")
     return "\n".join(lines) + "\n"
 
 
@@ -967,7 +967,7 @@ def run_analysis_stage(
 
     if not failing_results:
         write_json(triage_path, [])
-        codex_notes_path.write_text("No failing APIs required analysis.\n", encoding="utf-8")
+        codex_notes_path.write_text("无需分析的失败 API。\n", encoding="utf-8")
         (run_dir / "analysis_summary.md").write_text(render_analysis_summary(results, run_dir, fix_mode), encoding="utf-8")
         if logger is not None:
             logger.log(
@@ -999,18 +999,18 @@ def run_analysis_stage(
             else:
                 write_json(triage_path, heuristic_triage)
                 codex_notes_path.write_text(
-                    "Codex analysis did not produce valid triage JSON; falling back to heuristic classification.\n",
+                    "Codex 分析未产生有效的分诊 JSON，已回退至启发式分类。\n",
                     encoding="utf-8",
                 )
         else:
             write_json(triage_path, heuristic_triage)
             codex_notes_path.write_text(
-                "Codex analysis failed; falling back to heuristic classification.\n",
+                "Codex 分析失败，已回退至启发式分类。\n",
                 encoding="utf-8",
             )
     else:
         write_json(triage_path, heuristic_triage)
-        codex_notes_path.write_text("Analysis engine=heuristic; no nested codex review was run.\n", encoding="utf-8")
+        codex_notes_path.write_text("分析引擎=heuristic；未运行嵌套 Codex 审查。\n", encoding="utf-8")
 
     (run_dir / "analysis_summary.md").write_text(render_analysis_summary(results, run_dir, fix_mode), encoding="utf-8")
     if logger is not None:
@@ -1031,7 +1031,7 @@ def write_results(results: list[ApiResult], run_dir: Path) -> None:
     json_path = run_dir / "results.json"
     csv_path = run_dir / "results.csv"
     write_json(json_path, [asdict(result) for result in results])
-    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+    with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(asdict(results[0]).keys()) if results else list(asdict(ApiResult("", "", "")).keys()))
         writer.writeheader()
         for result in results:
@@ -1134,7 +1134,7 @@ def run_fix_attempt(
     elif changed_files:
         result.fix_target = "test/api_test"
     if completed.returncode != 0 and not result.fix_summary:
-        result.fix_summary = "codex fix attempt exited non-zero; inspect fix logs."
+        result.fix_summary = "Codex 修复尝试以非零状态退出，请检查修复日志。"
     if result.fix_applied:
         rerun = run_pytest_stage(
             [TEST_DIR / result.file_name],
@@ -1236,86 +1236,86 @@ def render_summary(
         categories[result.failure_category] = categories.get(result.failure_category, 0) + 1
 
     lines = [
-        f"# Pipeline Summary: {run_dir.name}",
+        f"# 流水线摘要：{run_dir.name}",
         "",
-        f"- Input: `{relative_to_root(input_path.resolve())}`",
-        f"- Manifest progress CSV: `{relative_to_root(manifest_path)}`",
-        f"- Fix mode: `{fix_mode}`",
-        f"- Command: `{final_command}`",
-        f"- Total APIs: `{total}`",
-        f"- Results JSON: `{relative_to_root(run_dir / 'results.json')}`",
-        f"- Results CSV: `{relative_to_root(run_dir / 'results.csv')}`",
-        f"- Summary Table CSV: `{relative_to_root(run_dir / 'summary_table.csv')}`",
-        f"- Generation Summary: `{relative_to_root(run_dir / 'generation_summary.md')}`",
-        f"- Analysis Summary: `{relative_to_root(run_dir / 'analysis_summary.md')}`",
+        f"- 输入：`{relative_to_root(input_path.resolve())}`",
+        f"- 进度 CSV：`{relative_to_root(manifest_path)}`",
+        f"- 修复模式：`{fix_mode}`",
+        f"- 运行命令：`{final_command}`",
+        f"- API 总数：`{total}`",
+        f"- 结果 JSON：`{relative_to_root(run_dir / 'results.json')}`",
+        f"- 结果 CSV：`{relative_to_root(run_dir / 'results.csv')}`",
+        f"- 汇总表 CSV：`{relative_to_root(run_dir / 'summary_table.csv')}`",
+        f"- 生成摘要：`{relative_to_root(run_dir / 'generation_summary.md')}`",
+        f"- 分析摘要：`{relative_to_root(run_dir / 'analysis_summary.md')}`",
         "",
-        "## Status Counts",
+        "## 状态统计",
     ]
     for status in sorted(counts):
         lines.append(f"- `{status}`: {counts[status]}")
-    lines.extend(["", "## Failure Categories"])
+    lines.extend(["", "## 失败类别"])
     for category in sorted(categories):
         lines.append(f"- `{category}`: {categories[category]}")
 
-    lines.extend(["", "## Fixed APIs"])
+    lines.extend(["", "## 已修复 API"])
     if fixed:
         for result in fixed:
-            changed = ", ".join(result.changed_files) if result.changed_files else "no tracked file diff detected"
+            changed = ", ".join(result.changed_files) if result.changed_files else "未检测到文件变更"
             lines.append(
-                f"- `{result.canonical_name}`: initial `{result.initial_failure_category}` -> "
-                f"`{result.fix_target or 'unknown'}`; rerun `{result.rerun_status}`; changed: {changed}"
+                f"- `{result.canonical_name}`: 初始分类 `{result.initial_failure_category}` -> "
+                f"`{result.fix_target or '未知'}`；重跑结果 `{result.rerun_status}`；变更文件：{changed}"
             )
     else:
-        lines.append("- None")
+        lines.append("- 无")
 
-    lines.extend(["", "## Remaining Failures"])
+    lines.extend(["", "## 仍有问题的 API"])
     if failed:
         for result in failed:
-            lines.append(f"- `{result.canonical_name}`: `{result.failure_category}`; {result.root_cause_summary or 'no summary'}")
+            lines.append(f"- `{result.canonical_name}`: `{result.failure_category}`；{result.root_cause_summary or '无摘要'}")
     else:
-        lines.append("- None")
+        lines.append("- 无")
 
-    lines.extend(["", "## Skipped APIs"])
+    lines.extend(["", "## 跳过的 API"])
     if skipped:
         for result in skipped:
-            lines.append(f"- `{result.canonical_name}`: `{result.final_status}`; {result.root_cause_summary or 'no summary'}")
+            lines.append(f"- `{result.canonical_name}`: `{result.final_status}`；{result.root_cause_summary or '无摘要'}")
     else:
-        lines.append("- None")
+        lines.append("- 无")
 
-    lines.extend(["", "## Passing APIs"])
+    lines.extend(["", "## 通过的 API"])
     if passed:
-        lines.append(f"- Count: {len(passed)}")
+        lines.append(f"- 数量：{len(passed)}")
     else:
-        lines.append("- None")
+        lines.append("- 无")
 
-    # --- Intervention summary (filter guide) ---
+    # --- 干预方式汇总（筛选指南）---
     human_results = [r for r in results if r.intervention_type == "human_required"]
     codex_results = [r for r in results if r.intervention_type == "codex_retry"]
-    lines.extend(["", "## Action Required: Human Intervention"])
+    lines.extend(["", "## 需要人工介入"])
     lines.append(
-        "> Filter `summary_table.csv` on `Intervention Type == human_required` to get this list."
+        "> 在 `summary_table.csv` 中筛选 `Intervention Type == human_required` 即可获得此列表。"
     )
     if human_results:
         for result in human_results:
             lines.append(
-                f"- `{result.canonical_name}`: reason=`{result.intervention_reason}` "
-                f"category=`{result.failure_category}`"
+                f"- `{result.canonical_name}`：原因=`{result.intervention_reason}` "
+                f"类别=`{result.failure_category}`"
             )
     else:
-        lines.append("- None")
+        lines.append("- 无")
 
-    lines.extend(["", "## Action Required: Codex Retry"])
+    lines.extend(["", "## 建议 Codex 重试"])
     lines.append(
-        "> Filter `summary_table.csv` on `Intervention Type == codex_retry` to get this list."
+        "> 在 `summary_table.csv` 中筛选 `Intervention Type == codex_retry` 即可获得此列表。"
     )
     if codex_results:
         for result in codex_results:
             lines.append(
-                f"- `{result.canonical_name}`: reason=`{result.intervention_reason}` "
-                f"category=`{result.failure_category}`"
+                f"- `{result.canonical_name}`：原因=`{result.intervention_reason}` "
+                f"类别=`{result.failure_category}`"
             )
     else:
-        lines.append("- None")
+        lines.append("- 无")
 
     return "\n".join(lines) + "\n"
 
@@ -1414,7 +1414,7 @@ def do_run(args: argparse.Namespace) -> int:
         write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="generated")
     else:
         (run_dir / "generation_summary.md").write_text(
-            "Generation stage was skipped because --skip-generate was set.\n",
+            "生成阶段已跳过（--skip-generate 参数已设置）。\n",
             encoding="utf-8",
         )
         logger.log("stage=generation skip reason=skip_generate")
@@ -1434,7 +1434,7 @@ def do_run(args: argparse.Namespace) -> int:
             result.final_status = "review_failed"
             result.pytest_outcome = "not_generated"
             result.failure_category = "TEST_BUG"
-            result.root_cause_summary = "Expected test file was not created during generation/review stage."
+            result.root_cause_summary = "生成/审查阶段未创建预期的测试文件。"
             result.initial_failure_category = result.failure_category
             result.initial_root_cause_summary = result.root_cause_summary
             result.fix_recommendation, result.auto_fixable, result.fix_target = recommend_fix(result.failure_category, args.fix_mode)
