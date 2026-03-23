@@ -37,18 +37,18 @@ torch.library,pytest_passed,NONE,No,not_run,No explicit failure detail was captu
 torch._dynamo.compiled_autograd.compiled_autograd_enabled,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
 torch._dynamo.compiled_autograd.compiled_autograd_enabled_force_eager,analyzed,UNKNOWN,No,not_run,No explicit failure detail was captured.
 torch._dynamo.compiled_autograd.in_compiled_autograd_region,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
-torch._running_with_deploy,pytest_passed,NONE,No,not_run,`torch._running_with_deploy` 返回进程部署状态，不存在可验证的 NPU 设备语义。 /home/l00913161/projects/pta_testcase/test/api_test/test__running_with_deploy.py:31: `torch._running_with_deploy` 返回进程部署状态，不存在可验证的 NPU 设备语义。
+torch._running_with_deploy,pytest_passed,NONE,No,not_run,`torch._running_with_deploy` 返回进程部署状态，不存在可验证的 NPU 设备语义。 test/api_test/test__running_with_deploy.py:31: `torch._running_with_deploy` 返回进程部署状态，不存在可验证的 NPU 设备语义。
 torch.utils._python_dispatch.is_traceable_wrapper_subclass,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
 torch._dynamo.comptime.comptime.print,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
 torch._dynamo.config,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
 torch._dynamo.config.skip_fsdp_hooks,analyzed,UNKNOWN,No,not_run,No explicit failure detail was captured.
 torch._C.DispatchKey.Functionalize,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
 torch._C.DispatchKeySet,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
-torch._C._ExcludeDispatchKeyGuard,pytest_passed,NONE,No,not_run,当前环境缺少稳定的 NPU dispatch 可观测路径，无法可靠验证 _ExcludeDispatchKeyGuard 的正常语义。 /home/l00913161/projects/pta_testcase/test/api_test/test__C__ExcludeDispatchKeyGuard.py:31: 当前环境缺少稳定的 NPU dispatch 可观测路径，无法可靠验证 _ExcludeDispatchKeyGuard 的正常语义。
+torch._C._ExcludeDispatchKeyGuard,pytest_passed,NONE,No,not_run,当前环境缺少稳定的 NPU dispatch 可观测路径，无法可靠验证 _ExcludeDispatchKeyGuard 的正常语义。 test/api_test/test__C__ExcludeDispatchKeyGuard.py:31: 当前环境缺少稳定的 NPU dispatch 可观测路径，无法可靠验证 _ExcludeDispatchKeyGuard 的正常语义。
 torch._from_functional_tensor,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
-torch._prims_common.make_contiguous_strides_for,pytest_passed,NONE,No,not_run,`make_contiguous_strides_for` 只处理 shape，不存在可验证的 NPU 设备语义。 /home/l00913161/projects/pta_testcase/test/api_test/test__prims_common_make_contiguous_strides_for.py:31: `make_contiguous_strides_for` 只处理 shape，不存在可验证的 NPU 设备语义。
-torch.fx.node.has_side_effect,skipped,UNSUPPORTED_ON_NPU,No,not_run,`torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。 /home/l00913161/projects/pta_testcase/test/api_test/test_fx_node_has_side_effect.py:31: `torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
+torch._prims_common.make_contiguous_strides_for,pytest_passed,NONE,No,not_run,`make_contiguous_strides_for` 只处理 shape，不存在可验证的 NPU 设备语义。 test/api_test/test__prims_common_make_contiguous_strides_for.py:31: `make_contiguous_strides_for` 只处理 shape，不存在可验证的 NPU 设备语义。
+torch.fx.node.has_side_effect,skipped,UNSUPPORTED_ON_NPU,No,not_run,`torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。 test/api_test/test_fx_node_has_side_effect.py:31: `torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
 torch.nn.Module.__setattr__,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
 torch.nn.Module._parameters,pytest_passed,NONE,No,not_run,No explicit failure detail was captured.
-torch._logging.warning_once,pytest_passed,NONE,No,not_run,`torch._logging.warning_once` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。 /home/l00913161/projects/pta_testcase/test/api_test/test__logging_warning_once.py:31: `torch._logging.warning_once` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
+torch._logging.warning_once,pytest_passed,NONE,No,not_run,`torch._logging.warning_once` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。 test/api_test/test__logging_warning_once.py:31: `torch._logging.warning_once` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
 torch.autograd.graph._MultiHandle,fixed,NONE,Yes,pytest_passed,No explicit failure detail was captured.

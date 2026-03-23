@@ -3,7 +3,7 @@
 - Input: `apis.txt`
 - Manifest progress CSV: `runs/20260323T041305Z/manifest.csv`
 - Fix mode: `tests`
-- Command: `/usr/local/python3.11.14/bin/python -m scripts.pipeline run --input apis.txt --fix-mode tests --report-dir /home/l00913161/projects/pta_testcase/runs`
+- Command: `/usr/local/python3.11.14/bin/python -m scripts.pipeline run --input apis.txt --fix-mode tests --report-dir runs`
 - Total APIs: `53`
 - Results JSON: `runs/20260323T041305Z/results.json`
 - Results CSV: `runs/20260323T041305Z/results.csv`
@@ -77,7 +77,7 @@ E       RuntimeError: !dispatch_key_.has_value() INTERNAL ASSERT FAILED at "/pyt
 
 ## Skipped APIs
 - `torch.fx.node.has_side_effect`: `skipped`; `torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
-/home/l00913161/projects/pta_testcase/test/api_test/test_fx_node_has_side_effect.py:31: `torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
+test/api_test/test_fx_node_has_side_effect.py:31: `torch.fx.node.has_side_effect` 缺少可验证的 NPU 设备语义，避免通过无关 NPU Tensor 伪造覆盖。
 
 ## Passing APIs
 - Count: 48
