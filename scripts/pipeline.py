@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from scripts.backends import CliBackend, SUPPORTED_BACKENDS, get_backend
+
 
 ROOT = Path(__file__).resolve().parent.parent
 TEST_DIR = ROOT / "test" / "api_test"
@@ -47,8 +49,8 @@ RUN_MANIFEST_FIELDS = DEFAULT_MANIFEST_FIELDS + [
     "last_updated_utc",
 ]
 FIX_MODES = {"off", "tests", "safe"}
-RUN_ENGINES = {"local", "codex"}
-ANALYSIS_ENGINES = {"heuristic", "codex"}
+RUN_ENGINES = {"local", "agent"}
+ANALYSIS_ENGINES = {"heuristic", "agent"}
 FAILURE_CATEGORIES = {
     "NONE",
     "TEST_BUG",
@@ -312,7 +314,8 @@ def run_command(
     return completed
 
 
-def run_codex_exec(
+def run_agent_exec(
+    backend: CliBackend,
     prompt: str,
     *,
     summary_path: Path,
@@ -320,22 +323,13 @@ def run_codex_exec(
     stderr_path: Path,
     cwd: Path = ROOT,
 ) -> subprocess.CompletedProcess[str]:
-    command = [
-        "codex",
-        "exec",
-        "--cd",
-        ".",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--output-last-message",
-        str(summary_path),
-        "-",
-    ]
-    return run_command(
-        command,
-        cwd=cwd,
-        stdin_text=prompt,
+    """Execute a prompt through the configured CLI backend."""
+    return backend.exec_prompt(
+        prompt,
+        summary_path=summary_path,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
+        cwd=cwd,
     )
 
 
@@ -360,7 +354,7 @@ def resolve_input_manifest(input_path: Path, run_dir: Path) -> tuple[list[Manife
     raise ValueError(f"unsupported input type for {input_path}; expected .txt or .csv")
 
 
-def codex_prompt_for_generation(manifest_path: Path, run_dir: Path, max_workers: int) -> str:
+def prompt_for_generation(manifest_path: Path, run_dir: Path, max_workers: int) -> str:
     return textwrap.dedent(
         f"""\
         使用 batch-npu-api-test skill。
@@ -387,6 +381,7 @@ def run_generation_stage(
     manifest_path: Path,
     run_dir: Path,
     max_workers: int,
+    backend: CliBackend,
     logger: PipelineLogger | None = None,
 ) -> None:
     started = time.monotonic()
@@ -394,15 +389,17 @@ def run_generation_stage(
         logger.log(
             "stage=generation start "
             f"manifest={relative_to_root(manifest_path)} max_workers={max_workers} "
-            f"stdout={relative_to_root(run_dir / 'codex_generation.stdout.log')} "
-            f"stderr={relative_to_root(run_dir / 'codex_generation.stderr.log')}"
+            f"backend={backend.name} "
+            f"stdout={relative_to_root(run_dir / 'agent_generation.stdout.log')} "
+            f"stderr={relative_to_root(run_dir / 'agent_generation.stderr.log')}"
         )
-    prompt = codex_prompt_for_generation(manifest_path, run_dir, max_workers)
-    completed = run_codex_exec(
+    prompt = prompt_for_generation(manifest_path, run_dir, max_workers)
+    completed = run_agent_exec(
+        backend,
         prompt,
         summary_path=run_dir / "generation_summary.md",
-        stdout_path=run_dir / "codex_generation.stdout.log",
-        stderr_path=run_dir / "codex_generation.stderr.log",
+        stdout_path=run_dir / "agent_generation.stdout.log",
+        stderr_path=run_dir / "agent_generation.stderr.log",
     )
     if logger is not None:
         logger.log(
@@ -413,7 +410,7 @@ def run_generation_stage(
     if completed.returncode != 0:
         raise RuntimeError(
             "generation stage failed; inspect "
-            f"{relative_to_root(run_dir / 'codex_generation.stderr.log')}"
+            f"{relative_to_root(run_dir / 'agent_generation.stderr.log')}"
         )
 
 
@@ -421,7 +418,7 @@ def build_pytest_command(test_files: list[Path], junit_path: Path) -> list[str]:
     return [sys.executable, "-m", "pytest", "-q", "--junitxml", str(junit_path), *[str(path) for path in test_files]]
 
 
-def codex_prompt_for_execution(
+def prompt_for_execution(
     label: str,
     pytest_cmd: str,
     command_path: Path,
@@ -460,7 +457,7 @@ def codex_prompt_for_execution(
 
         要求：
         1. 只执行上面的脚本，不要额外改文件。
-        2. 即使 pytest 失败，也不要把这次 codex 任务判成失败；保留日志即可。
+        2. 即使 pytest 失败，也不要把这次任务判成失败；保留日志即可。
         3. 最终回复只写简洁总结，包含 return code 和产物路径。
         """
     )
@@ -471,6 +468,7 @@ def run_pytest_stage(
     run_dir: Path,
     label: str,
     engine: str,
+    backend: CliBackend | None = None,
     logger: PipelineLogger | None = None,
 ) -> dict[str, object]:
     junit_path = run_dir / "pytest_raw" / f"{label}_junit.xml"
@@ -524,7 +522,7 @@ def run_pytest_stage(
             "command": command_text,
         }
 
-    prompt = codex_prompt_for_execution(
+    prompt = prompt_for_execution(
         label,
         command_text,
         command_path,
@@ -532,28 +530,31 @@ def run_pytest_stage(
         stderr_path,
         returncode_path,
     )
-    completed = run_codex_exec(
+    if backend is None:
+        raise RuntimeError("run_pytest_stage requires a backend when engine='agent'")
+    completed = run_agent_exec(
+        backend,
         prompt,
-        summary_path=run_dir / "pytest_raw" / f"{label}.codex.md",
-        stdout_path=run_dir / "pytest_raw" / f"{label}.codex.stdout.log",
-        stderr_path=run_dir / "pytest_raw" / f"{label}.codex.stderr.log",
+        summary_path=run_dir / "pytest_raw" / f"{label}.agent.md",
+        stdout_path=run_dir / "pytest_raw" / f"{label}.agent.stdout.log",
+        stderr_path=run_dir / "pytest_raw" / f"{label}.agent.stderr.log",
     )
     if completed.returncode != 0:
         raise RuntimeError(
             f"execution stage '{label}' failed; inspect "
-            f"{relative_to_root(run_dir / 'pytest_raw' / f'{label}.codex.stderr.log')}"
+            f"{relative_to_root(run_dir / 'pytest_raw' / f'{label}.agent.stderr.log')}"
         )
     if not returncode_path.exists():
         raise RuntimeError(
             f"execution stage '{label}' did not write return code; inspect "
-            f"{relative_to_root(run_dir / 'pytest_raw' / f'{label}.codex.md')}"
+            f"{relative_to_root(run_dir / 'pytest_raw' / f'{label}.agent.md')}"
         )
     returncode = int(returncode_path.read_text(encoding="utf-8").strip() or "1")
     if logger is not None:
         logger.log(
             f"stage=pytest done label={label} returncode={returncode} "
             f"elapsed_s={time.monotonic() - started:.1f} "
-            f"codex_summary={relative_to_root(run_dir / 'pytest_raw' / f'{label}.codex.md')}"
+            f"agent_summary={relative_to_root(run_dir / 'pytest_raw' / f'{label}.agent.md')}"
         )
     return {
         "returncode": returncode,
@@ -738,7 +739,7 @@ def derive_intervention_type(result: ApiResult) -> tuple[str, str]:
 
     intervention_type values:
       - "none"           : pipeline completed successfully; no action required.
-      - "codex_retry"    : Codex can plausibly address this without human help.
+      - "agent_retry"    : AI agent can plausibly address this without human help.
       - "human_required" : needs human investigation and/or manual fix.
 
     intervention_reason is a short snake_case code explaining the specific cause.
@@ -747,15 +748,15 @@ def derive_intervention_type(result: ApiResult) -> tuple[str, str]:
     if result.final_status in {"pytest_passed", "fixed"}:
         return "none", ""
 
-    # Test file was never generated/collected by Codex → regeneration is worth trying
+    # Test file was never generated/collected → regeneration is worth trying
     if result.final_status == "review_failed" and result.pytest_outcome in {"not_generated", "not_collected"}:
-        return "codex_retry", "test_not_generated"
+        return "agent_retry", "test_not_generated"
 
-    # Test has a TEST_BUG but Codex fix was not yet applied → auto-fix can be attempted
+    # Test has a TEST_BUG but fix was not yet applied → auto-fix can be attempted
     if result.failure_category == "TEST_BUG" and not result.fix_applied:
-        return "codex_retry", "test_bug_not_yet_fixed"
+        return "agent_retry", "test_bug_not_yet_fixed"
 
-    # Codex tried a fix but the rerun still failed → escalate to human
+    # Agent tried a fix but the rerun still failed → escalate to human
     if result.fix_applied and result.rerun_status not in {"pytest_passed", "fixed", "not_run"}:
         return "human_required", "fix_attempted_but_failed"
 
@@ -847,7 +848,7 @@ def build_analysis_inputs(results: list[ApiResult], run_dir: Path, execution: di
     return path
 
 
-def codex_prompt_for_analysis(analysis_input_path: Path, triage_path: Path) -> str:
+def prompt_for_analysis(analysis_input_path: Path, triage_path: Path) -> str:
     categories = ", ".join(sorted(FAILURE_CATEGORIES - {"NONE"}))
     return textwrap.dedent(
         f"""\
@@ -910,7 +911,7 @@ def render_analysis_summary(results: list[ApiResult], run_dir: Path, fix_mode: s
         f"- 修复模式：`{fix_mode}`",
         f"- 输入文件：`{relative_to_root(run_dir / 'analysis_inputs.json')}`",
         f"- 分诊 JSON：`{relative_to_root(run_dir / 'analysis_triage.json')}`",
-        f"- Codex 备注：`{relative_to_root(run_dir / 'analysis_codex.md')}`",
+        f"- AI 代理备注：`{relative_to_root(run_dir / 'analysis_agent.md')}`",
         "",
         "## 可自动修复候选",
     ]
@@ -943,12 +944,13 @@ def run_analysis_stage(
     execution: dict[str, object],
     fix_mode: str,
     engine: str,
+    backend: CliBackend | None = None,
     logger: PipelineLogger | None = None,
 ) -> list[ApiResult]:
     started = time.monotonic()
     analysis_input_path = build_analysis_inputs(results, run_dir, execution)
     triage_path = run_dir / "analysis_triage.json"
-    codex_notes_path = run_dir / "analysis_codex.md"
+    agent_notes_path = run_dir / "analysis_agent.md"
     failing_results = [result for result in results if result.final_status in {"pytest_failed", "skipped", "review_failed"}]
     if logger is not None:
         logger.log(
@@ -967,7 +969,7 @@ def run_analysis_stage(
 
     if not failing_results:
         write_json(triage_path, [])
-        codex_notes_path.write_text("无需分析的失败 API。\n", encoding="utf-8")
+        agent_notes_path.write_text("无需分析的失败 API。\n", encoding="utf-8")
         (run_dir / "analysis_summary.md").write_text(render_analysis_summary(results, run_dir, fix_mode), encoding="utf-8")
         if logger is not None:
             logger.log(
@@ -976,13 +978,16 @@ def run_analysis_stage(
             )
         return results
 
-    if engine == "codex":
-        prompt = codex_prompt_for_analysis(analysis_input_path, triage_path)
-        completed = run_codex_exec(
+    if engine == "agent":
+        if backend is None:
+            raise RuntimeError("run_analysis_stage requires a backend when engine='agent'")
+        prompt = prompt_for_analysis(analysis_input_path, triage_path)
+        completed = run_agent_exec(
+            backend,
             prompt,
-            summary_path=codex_notes_path,
-            stdout_path=run_dir / "analysis_codex.stdout.log",
-            stderr_path=run_dir / "analysis_codex.stderr.log",
+            summary_path=agent_notes_path,
+            stdout_path=run_dir / "analysis_agent.stdout.log",
+            stderr_path=run_dir / "analysis_agent.stderr.log",
         )
         if completed.returncode == 0:
             triage = load_analysis_triage(triage_path)
@@ -998,19 +1003,19 @@ def run_analysis_stage(
                     result.fix_recommendation, result.auto_fixable, result.fix_target = recommend_fix(result.failure_category, fix_mode)
             else:
                 write_json(triage_path, heuristic_triage)
-                codex_notes_path.write_text(
-                    "Codex 分析未产生有效的分诊 JSON，已回退至启发式分类。\n",
+                agent_notes_path.write_text(
+                    "AI 代理分析未产生有效的分诊 JSON，已回退至启发式分类。\n",
                     encoding="utf-8",
                 )
         else:
             write_json(triage_path, heuristic_triage)
-            codex_notes_path.write_text(
-                "Codex 分析失败，已回退至启发式分类。\n",
+            agent_notes_path.write_text(
+                "AI 代理分析失败，已回退至启发式分类。\n",
                 encoding="utf-8",
             )
     else:
         write_json(triage_path, heuristic_triage)
-        codex_notes_path.write_text("分析引擎=heuristic；未运行嵌套 Codex 审查。\n", encoding="utf-8")
+        agent_notes_path.write_text("分析引擎=heuristic；未运行嵌套 AI 审查。\n", encoding="utf-8")
 
     (run_dir / "analysis_summary.md").write_text(render_analysis_summary(results, run_dir, fix_mode), encoding="utf-8")
     if logger is not None:
@@ -1074,7 +1079,7 @@ def build_fix_request(result: ApiResult, fix_mode: str) -> dict[str, object]:
     }
 
 
-def codex_prompt_for_fix(request_path: Path) -> str:
+def prompt_for_fix(request_path: Path) -> str:
     return textwrap.dedent(
         f"""\
         使用 single-api-fix skill。
@@ -1097,6 +1102,7 @@ def run_fix_attempt(
     run_dir: Path,
     fix_mode: str,
     run_engine: str,
+    backend: CliBackend,
     logger: PipelineLogger | None = None,
 ) -> ApiResult:
     started = time.monotonic()
@@ -1111,9 +1117,10 @@ def run_fix_attempt(
     marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     request_path = run_dir / "fixes" / f"{Path(result.file_name).stem}.request.json"
     write_json(request_path, build_fix_request(result, fix_mode))
-    prompt = codex_prompt_for_fix(request_path)
+    prompt = prompt_for_fix(request_path)
     summary_path = run_dir / "fixes" / f"{Path(result.file_name).stem}.md"
-    completed = run_codex_exec(
+    completed = run_agent_exec(
+        backend,
         prompt,
         summary_path=summary_path,
         stdout_path=run_dir / "fixes" / f"{Path(result.file_name).stem}.stdout.log",
@@ -1134,13 +1141,14 @@ def run_fix_attempt(
     elif changed_files:
         result.fix_target = "test/api_test"
     if completed.returncode != 0 and not result.fix_summary:
-        result.fix_summary = "Codex 修复尝试以非零状态退出，请检查修复日志。"
+        result.fix_summary = "AI 代理修复尝试以非零状态退出，请检查修复日志。"
     if result.fix_applied:
         rerun = run_pytest_stage(
             [TEST_DIR / result.file_name],
             run_dir,
             f"rerun_{Path(result.file_name).stem}",
             run_engine,
+            backend,
             logger,
         )
         rerun_results = create_results(
@@ -1168,6 +1176,7 @@ def apply_auto_fixes(
     run_dir: Path,
     fix_mode: str,
     run_engine: str,
+    backend: CliBackend,
     logger: PipelineLogger | None = None,
 ) -> list[ApiResult]:
     if fix_mode == "off":
@@ -1186,7 +1195,7 @@ def apply_auto_fixes(
         if result.final_status not in {"pytest_failed", "skipped", "review_failed"} or not result.auto_fixable:
             updated.append(result)
             continue
-        updated.append(run_fix_attempt(result, run_dir, fix_mode, run_engine, logger))
+        updated.append(run_fix_attempt(result, run_dir, fix_mode, run_engine, backend, logger))
     return updated
 
 
@@ -1290,7 +1299,7 @@ def render_summary(
 
     # --- 干预方式汇总（筛选指南）---
     human_results = [r for r in results if r.intervention_type == "human_required"]
-    codex_results = [r for r in results if r.intervention_type == "codex_retry"]
+    retry_results = [r for r in results if r.intervention_type == "agent_retry"]
     lines.extend(["", "## 需要人工介入"])
     lines.append(
         "> 在 `summary_table.csv` 中筛选 `Intervention Type == human_required` 即可获得此列表。"
@@ -1304,12 +1313,12 @@ def render_summary(
     else:
         lines.append("- 无")
 
-    lines.extend(["", "## 建议 Codex 重试"])
+    lines.extend(["", "## 建议 AI 代理重试"])
     lines.append(
-        "> 在 `summary_table.csv` 中筛选 `Intervention Type == codex_retry` 即可获得此列表。"
+        "> 在 `summary_table.csv` 中筛选 `Intervention Type == agent_retry` 即可获得此列表。"
     )
-    if codex_results:
-        for result in codex_results:
+    if retry_results:
+        for result in retry_results:
             lines.append(
                 f"- `{result.canonical_name}`：原因=`{result.intervention_reason}` "
                 f"类别=`{result.failure_category}`"
@@ -1372,11 +1381,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     run_parser.add_argument("--report-dir", type=Path, default=RUNS_DIR, help="Base directory for run artifacts")
     run_parser.add_argument("--resume", type=Path, help="Reuse an existing run directory")
     run_parser.add_argument("--fix-mode", choices=sorted(FIX_MODES), default="tests", help="Automatic fix scope")
-    run_parser.add_argument("--run-engine", choices=sorted(RUN_ENGINES), default="codex", help="How pytest is executed")
-    run_parser.add_argument("--analysis-engine", choices=sorted(ANALYSIS_ENGINES), default="codex", help="How failure triage is performed")
+    run_parser.add_argument("--cli-backend", choices=sorted(SUPPORTED_BACKENDS), default="codex", help="Which AI CLI backend to use")
+    run_parser.add_argument("--run-engine", choices=sorted(RUN_ENGINES), default="agent", help="How pytest is executed")
+    run_parser.add_argument("--analysis-engine", choices=sorted(ANALYSIS_ENGINES), default="agent", help="How failure triage is performed")
     run_parser.add_argument("--skip-generate", action="store_true", help="Skip generation and reuse existing tests")
-    run_parser.add_argument("--max-workers", type=int, default=8, help="Generation stage worker budget hint for nested codex")
-    run_parser.add_argument("--debug", action="store_true", help="Enable debug mode to retain all intermediate subagent logs and full codex traces")
+    run_parser.add_argument("--max-workers", type=int, default=8, help="Generation stage worker budget hint for nested agent")
+    run_parser.add_argument("--debug", action="store_true", help="Enable debug mode to retain all intermediate subagent logs and full agent traces")
     return parser.parse_args(argv)
 
 
@@ -1388,16 +1398,17 @@ def do_build_manifest(args: argparse.Namespace) -> int:
 
 def do_run(args: argparse.Namespace) -> int:
     start_time = time.time()
+    backend = get_backend(args.cli_backend)
     run_dir = ensure_run_dir(args.report_dir, args.resume)
     logger = PipelineLogger(run_dir / "pipeline.log")
     
     if args.debug:
-        logger.log("debug mode enabled: full codex and subagent traces will be collected")
+        logger.log(f"debug mode enabled: full {backend.name} and subagent traces will be collected")
 
     logger.log(
         "pipeline start "
         f"input={relative_to_root(args.input.resolve())} fix_mode={args.fix_mode} "
-        f"run_engine={args.run_engine} analysis_engine={args.analysis_engine} "
+        f"cli_backend={backend.name} run_engine={args.run_engine} analysis_engine={args.analysis_engine} "
         f"run_dir={relative_to_root(run_dir)}"
     )
     entries, manifest_path = resolve_input_manifest(args.input, run_dir)
@@ -1410,7 +1421,7 @@ def do_run(args: argparse.Namespace) -> int:
     )
 
     if not args.skip_generate:
-        run_generation_stage(manifest_path, run_dir, args.max_workers, logger)
+        run_generation_stage(manifest_path, run_dir, args.max_workers, backend, logger)
         write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="generated")
     else:
         (run_dir / "generation_summary.md").write_text(
@@ -1425,7 +1436,7 @@ def do_run(args: argparse.Namespace) -> int:
     logger.log(
         f"pytest targets ready existing_files={len(existing_entries)} missing_files={len(missing_entries)}"
     )
-    execution = run_pytest_stage([entry.test_path for entry in existing_entries], run_dir, "initial", args.run_engine, logger)
+    execution = run_pytest_stage([entry.test_path for entry in existing_entries], run_dir, "initial", args.run_engine, backend, logger)
     results = create_results(target_entries, execution, run_dir, args.fix_mode)
     missing_names = {entry.canonical_name for entry in missing_entries}
     for result in results:
@@ -1440,14 +1451,14 @@ def do_run(args: argparse.Namespace) -> int:
             result.fix_recommendation, result.auto_fixable, result.fix_target = recommend_fix(result.failure_category, args.fix_mode)
     write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="initial_pytest", results=results)
 
-    results = run_analysis_stage(results, run_dir, execution, args.fix_mode, args.analysis_engine, logger)
+    results = run_analysis_stage(results, run_dir, execution, args.fix_mode, args.analysis_engine, backend, logger)
     write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="analysis", results=results)
-    results = apply_auto_fixes(results, run_dir, args.fix_mode, args.run_engine, logger)
+    results = apply_auto_fixes(results, run_dir, args.fix_mode, args.run_engine, backend, logger)
     write_run_manifest(entries, manifest_path, selected_entries=target_entries, run_phase="fix", results=results)
     if any(result.fix_applied for result in results):
         rerun_files = [entry.test_path for entry in target_entries if entry.test_path.exists()]
         logger.log(f"stage=pytest rerun start files={len(rerun_files)}")
-        final_execution = run_pytest_stage(rerun_files, run_dir, "postfix_batch", args.run_engine, logger)
+        final_execution = run_pytest_stage(rerun_files, run_dir, "postfix_batch", args.run_engine, backend, logger)
         results = merge_final_batch_results(target_entries, results, final_execution, run_dir)
     else:
         logger.log("stage=pytest rerun skip reason=no_fix_applied")
@@ -1456,9 +1467,11 @@ def do_run(args: argparse.Namespace) -> int:
 
     write_results(results, run_dir)
     command_parts = [sys.executable, "-m", "scripts.pipeline", "run", "--input", str(args.input), "--fix-mode", args.fix_mode]
-    if args.run_engine != "codex":
+    if args.cli_backend != "codex":
+        command_parts.extend(["--cli-backend", args.cli_backend])
+    if args.run_engine != "agent":
         command_parts.extend(["--run-engine", args.run_engine])
-    if args.analysis_engine != "codex":
+    if args.analysis_engine != "agent":
         command_parts.extend(["--analysis-engine", args.analysis_engine])
     if args.skip_generate:
         command_parts.append("--skip-generate")
@@ -1477,10 +1490,10 @@ def do_run(args: argparse.Namespace) -> int:
         import shutil
         debug_dir = run_dir / "debug_logs"
         debug_dir.mkdir(parents=True, exist_ok=True)
-        codex_sessions_dir = Path.home() / ".codex" / "sessions"
-        if codex_sessions_dir.exists():
+        session_log_dir = backend.session_log_dir
+        if session_log_dir is not None and session_log_dir.exists():
             count = 0
-            for jsonl_file in codex_sessions_dir.rglob("*.jsonl"):
+            for jsonl_file in session_log_dir.rglob("*.jsonl"):
                 if jsonl_file.is_file() and jsonl_file.stat().st_mtime >= start_time:
                     shutil.copy2(jsonl_file, debug_dir / jsonl_file.name)
                     count += 1

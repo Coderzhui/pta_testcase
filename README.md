@@ -1,89 +1,84 @@
-# PyTorch NPU API 自动测试流水线 (PTA Testcase)
+<div align="center">
 
-本仓库致力于自动化生成、执行、分析和修复 PyTorch NPU API 的功能测试用例。通过一条完整的处理流水线，我们将指定的 PyTorch API 转换为可在 NPU 上稳定运行的 `pytest` 用例，并对其执行结果进行智能分析与低风险修复。
+# 🚀 PTA Testcase
 
-## 核心目标与规范
+### PyTorch NPU API 自动测试流水线
 
-- **一 API 一文件**：每个 API 仅生成一个独立的测试文件，并统一存放在 `test/api_test/` 目录下。
-- **自动分析与精准修复**：内置流程会自动对测试失败结果进行分类（如 `TEST_BUG`, `PYTORCH_BUG` 等）。默认只对测试代码本身的问题进行安全修复，避免盲目修改算子或底层逻辑。
-- **NPU 专属**：所有生成的测试必须基于 `torch_npu` 在 NPU 设备上运行。
-- **功能覆盖优先**：验证 API 可调用性、输出设备及异常场景，着重于全维度入参覆盖，不强制进行精度对比。
+**AI 驱动的端到端测试生成 · 智能失败诊断 · 低风险自动修复**
 
-详见完整的仓库和开发约束：[AGENTS.md](./AGENTS.md)。
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](#-环境要求)
+[![pytest](https://img.shields.io/badge/framework-pytest-0A9EDC?logo=pytest&logoColor=white)](#)
+[![NPU](https://img.shields.io/badge/device-Ascend%20NPU-E6232E)](#)
+[![License](https://img.shields.io/badge/license-MIT-green)](#)
 
-## 工作流 (Pipeline workflow)
+[快速开始](#-快速开始) · [工作流](#-工作流) · [CLI 参数](#%EF%B8%8F-cli-参数说明) · [配置同步](#-配置同步) · [贡献指南](#-贡献)
 
-本仓库不只是生成测试代码的脚本，而是一套包含闭环的作业流。默认的执行链路如下：
+</div>
+
+---
+
+## 📖 简介
+
+PTA Testcase 是一套面向 **Ascend NPU** 的 PyTorch API 自动化测试框架。只需提供一份 API 清单，即可由 AI 代理完成：
+
+| 阶段 | 说明 |
+|------|------|
+| 🧪 **生成** | 为每个 API 自动生成覆盖全入参维度的 `pytest` 用例 |
+| ▶️ **执行** | 在 NPU 设备上批量运行，收集 JUnit XML、stdout/stderr |
+| 🔍 **分析** | 对失败用例进行智能分诊，归入 10 种失败类别 |
+| 🔧 **修复** | 自动修复测试 Bug，可选低风险源码修复 |
+| 📊 **报告** | 输出结构化 CSV/JSON/Markdown 报告，支持持续追踪 |
+
+### ✨ 核心特性
+
+- 🤖 **多后端支持** — 通过 `--cli-backend` 无缝切换 [OpenAI Codex CLI](https://github.com/openai/codex) 与 [GitHub Copilot CLI](https://docs.github.com/copilot)
+- 📁 **一 API 一文件** — 测试文件与 API 严格一一对应，统一放置于 `test/api_test/`
+- 🎯 **功能覆盖优先** — 验证可调用性、返回类型、设备行为、异常场景；不做数值精度对比
+- 🔄 **闭环流水线** — 生成 → 执行 → 分析 → 修复 → 回归，单命令完成
+- 🛡️ **分级修复策略** — `tests` 模式只改测试代码，`safe` 模式允许最小化源码修复
+- ⚙️ **配置同步** — 内置工具在 `.codex/` 与 `.github/` 之间双向同步 Agent/Skill 配置
+
+> 📌 完整的仓库约定和开发规范见 [AGENTS.md](./AGENTS.md)
+
+---
+
+## 🔄 工作流
 
 ```mermaid
 flowchart TD
-    A["apis.txt (提供待测API)"] --> B["构建manifest build-manifest"]
-    B --> C["manifest.csv (测试清单)"]
-    C --> D["生成测试文件<br/>(调用 Codex 批量生成)"]
-    D --> E["运行 Pytest<br/>(执行测试)"]
-    E --> F["分析失败用例<br/>(智能分诊与归类)"]
-    F --> G{Failure Category}
-    G -->|TEST_BUG| H["修复测试文件<br/>--fix-mode tests"]
-    G -->|PYTORCH_BUG / TORCH_NPU_BUG| I["可选源码修复<br/>--fix-mode safe"]
-    G -->|ENVIRONMENT / UNSUPPORTED / etc.| J["仅报告"]
-    H --> K["复跑 Pytest"]
+    A["📄 apis.txt<br/>(待测 API 清单)"] --> B["🏗️ build-manifest"]
+    B --> C["📋 manifest.csv<br/>(测试清单)"]
+    C --> D["🤖 生成测试文件<br/>(AI 代理批量生成)"]
+    D --> E["▶️ 运行 Pytest<br/>(NPU 设备执行)"]
+    E --> F["🔍 分析失败用例<br/>(智能分诊与归类)"]
+    F --> G{"🏷️ Failure Category"}
+    G -->|"🐛 TEST_BUG"| H["🔧 修复测试文件<br/>--fix-mode tests"]
+    G -->|"⚠️ PYTORCH_BUG<br/>TORCH_NPU_BUG"| I["🔧 可选源码修复<br/>--fix-mode safe"]
+    G -->|"📝 ENVIRONMENT<br/>UNSUPPORTED / etc."| J["📊 仅报告"]
+    H --> K["🔁 复跑 Pytest"]
     I --> K
-    J --> L["汇总与结果<br/>输出报告"]
+    J --> L["📈 汇总与结果<br/>输出报告"]
     K --> L
 ```
 
-### 流水线步骤解析：
-1. **输入阶段**：解析 `apis.txt` 生成 `manifest.csv`。过滤出状态为 `pending` 的 API。
-2. **生成阶段**：调用 Codex 智能批量生成目标测试文件。
-3. **执行阶段**：自动运行 pytest 收集测试结果，保存 stdout/stderr 日志及 JUnit XML 报告。
-4. **分析阶段**：对失败用例（Failed）进行诊断和分类（Triage）。
-5. **修复阶段**：根据指定模式，自动化修复发现的问题：
-   - `--fix-mode tests`：仅修复测试本身的问题 (`TEST_BUG`)。
-   - `--fix-mode safe`：在安全的情况下，尝试修复框架源码带来的明确 Bug。
-6. **回归与总结**：复跑受影响的用例，整理最终汇总产出至 `runs/` 目录。
+### 📋 步骤详解
 
-## 快速开始
+| # | 阶段 | 说明 |
+|---|------|------|
+| 1 | **📥 输入** | 解析 `apis.txt` 生成 `manifest.csv`，过滤 `status=pending` 的 API |
+| 2 | **🤖 生成** | AI 代理批量生成测试文件，每个 API 对应一个 `test/api_test/test_*.py` |
+| 3 | **▶️ 执行** | 运行 pytest 收集结果，保存日志及 JUnit XML |
+| 4 | **🔍 分析** | 对失败用例诊断分类（如 `TEST_BUG`、`PYTORCH_BUG` 等） |
+| 5 | **🔧 修复** | `--fix-mode tests` 修复测试 Bug；`--fix-mode safe` 可修复源码 Bug |
+| 6 | **📈 回归** | 复跑受影响用例，输出最终汇总到 `runs/<run_id>/` |
 
-可以通过 `scripts/run_api_batch.sh` 或直接用 Python 模块调用流水线。
+---
 
-**推荐命令：**
-```bash
-python -m scripts.pipeline run --input apis.txt --fix-mode tests
-```
+## ⚡ 快速开始
 
-**或者使用快捷脚本：**
-```bash
-bash scripts/run_api_batch.sh apis.txt --fix-mode tests
-```
+### 1️⃣ 准备 API 清单
 
-## CLI 参数说明
-
-使用 `python -m scripts.pipeline run` 时可灵活控制执行的行为：
-
-| 参数 | 影响阶段 | 默认值 | 功能描述 |
-| --- | --- | --- | --- |
-| `--input` | 输入阶段 | 必填 | 数据源文件，支持 `apis.txt` 列表或 `api_manifest.csv`。 |
-| `--report-dir` | 工件输出 | `runs/` | 指定构建目录（Run Artifact），默认生成的报告和日志存放于此。 |
-| `--resume` | 复用执行 | 无 | 传入已有的 Run 目录路径，以复用上次的执行状态继续运行。 |
-| `--skip-generate` | 生成阶段 | `false` | 跳过 Codex 测试文件生成过程，直接复用已有的测试代码执行。 |
-| `--max-workers` | 生成阶段 | `8` | 提示 Codex 并发生成请求的预期并行度。 |
-| `--run-engine` | 执行阶段 | `codex` | `codex`：交由 Codex 外层执行测试；`local`：本地作为 Python 子进程执行 pytest。 |
-| `--analysis-engine` | 分析阶段 | `codex` | `codex`：读取日志进行智能诊断分类；`heuristic`：使用本地启发式规则分类。 |
-| `--fix-mode` | 修复阶段 | `tests` | `off`：仅出报告不修复；`tests`：修复 `TEST_BUG`；`safe`：扩展允许修复底层安全 Bug。 |
-
-
-查看帮助：
-
-```bash
-python -m scripts.pipeline run --help
-python -m scripts.pipeline build-manifest --help
-```
-
-## Quick Start
-
-### 1. 准备 `apis.txt`
-
-每行一个 API，空行和 `#` 注释会被忽略：
+创建 `apis.txt`，每行一个 API（支持 `#` 注释和空行）：
 
 ```text
 # tensor methods
@@ -95,73 +90,114 @@ torch.Event
 torch.utils.swap_tensors
 ```
 
-### 2. 执行默认流水线
+### 2️⃣ 一键运行
 
 ```bash
+# 使用 Codex CLI（默认）
 python -m scripts.pipeline run --input apis.txt --fix-mode tests
+
+# 使用 Copilot CLI
+python -m scripts.pipeline run --input apis.txt --cli-backend copilot --fix-mode tests
+
+# 或使用快捷脚本
+bash scripts/run_api_batch.sh apis.txt --fix-mode tests
 ```
 
-### 3. 查看结果
+### 3️⃣ 查看结果
 
-优先看：
+```bash
+# 批次总览
+cat runs/<run_id>/summary.md
 
-- `runs/<run_id>/manifest.csv`
-- `runs/<run_id>/summary.md`
-- `runs/<run_id>/analysis_summary.md`
-- `runs/<run_id>/results.csv`
+# 失败诊断详情
+cat runs/<run_id>/analysis_summary.md
 
-## Common Commands
+# 结构化结果（可导入 Excel / Pandas）
+cat runs/<run_id>/results.csv
+```
 
-只生成 manifest：
+---
+
+## 🛠️ CLI 参数说明
+
+```bash
+python -m scripts.pipeline run --help
+```
+
+| 参数 | 阶段 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--input` | 📥 输入 | **必填** | 数据源：`apis.txt` 或 `api_manifest.csv` |
+| `--cli-backend` | 🌐 全局 | `codex` | AI 后端：`codex` \| `copilot` |
+| `--report-dir` | 📂 输出 | `runs/` | Run Artifact 存放目录 |
+| `--resume` | 🔄 恢复 | — | 传入已有 Run 目录路径，继续上次运行 |
+| `--skip-generate` | 🤖 生成 | `false` | 跳过生成，复用已有测试文件 |
+| `--max-workers` | 🤖 生成 | `8` | AI 代理并发预算 |
+| `--run-engine` | ▶️ 执行 | `agent` | `agent`：AI 代理执行 \| `local`：本地 subprocess |
+| `--analysis-engine` | 🔍 分析 | `agent` | `agent`：AI 智能诊断 \| `heuristic`：本地规则 |
+| `--fix-mode` | 🔧 修复 | `tests` | `off` \| `tests` \| `safe` |
+| `--debug` | 🐞 调试 | `false` | 保留完整 AI 代理日志 |
+
+---
+
+## 📚 常用命令
+
+<details>
+<summary><b>🔨 只生成 manifest</b></summary>
 
 ```bash
 python -m scripts.pipeline build-manifest --input apis.txt --output api_manifest.csv
-python process_api_manifest.py apis.txt api_manifest.csv
 ```
+</details>
 
-跑完整默认流程：
-
-```bash
-python -m scripts.pipeline run --input apis.txt --fix-mode tests
-```
-
-复用已有测试，只重跑执行和分析：
+<details>
+<summary><b>🔄 复用已有测试，只重跑执行和分析</b></summary>
 
 ```bash
 python -m scripts.pipeline run --input api_manifest.csv --skip-generate --fix-mode off
 ```
+</details>
 
-强制本地执行 pytest：
+<details>
+<summary><b>💻 强制本地执行 pytest</b></summary>
 
 ```bash
 python -m scripts.pipeline run --input apis.txt --run-engine local --fix-mode tests
 ```
+</details>
 
-分析阶段不走 Codex：
+<details>
+<summary><b>📏 分析阶段使用本地启发式规则</b></summary>
 
 ```bash
 python -m scripts.pipeline run --input apis.txt --analysis-engine heuristic --fix-mode tests
 ```
+</details>
 
-允许低风险源码修复：
+<details>
+<summary><b>🤖 使用 Copilot CLI 后端</b></summary>
+
+```bash
+python -m scripts.pipeline run --input apis.txt --cli-backend copilot --fix-mode tests
+```
+</details>
+
+<details>
+<summary><b>🛡️ 允许低风险源码修复</b></summary>
 
 ```bash
 python -m scripts.pipeline run --input api_manifest.csv --fix-mode safe
 ```
+</details>
 
-## Input Formats
+---
+
+## 📥 输入格式
 
 ### `apis.txt`
 
-每行一个 API 名称。默认会被转换成一条 manifest 记录，并生成：
-
-- `canonical_name`
-- `file_name`
-- `status=pending`
+每行一个 API 名称，自动转换为 manifest 记录（`canonical_name` + `file_name` + `status=pending`）。
 
 ### `api_manifest.csv`
-
-至少需要这些列：
 
 ```csv
 raw_api_name,canonical_name,file_name,status,notes
@@ -169,85 +205,167 @@ Tensor.new_empty,Tensor.new_empty,test_Tensor_new_empty.py,pending,
 torch.Event,torch.Event,test_Event.py,pending,
 ```
 
-规则：
+> 💡 `file_name` 为最终测试文件名，`status=pending` 的条目进入当前批次。
 
-- `file_name` 必须是最终测试文件名
-- `status=pending` 会进入当前批次
-- 如果没有任何 `pending`，流水线会退化为处理全部条目
+---
 
-## Output Artifacts
+## 📦 输出工件
 
-每次运行都会生成一个独立目录，例如：
+每次运行产生独立目录 `runs/<run_id>/`，包含：
+
+| 工件 | 说明 |
+|------|------|
+| 📋 `manifest.csv` | 实时进度表，随流水线各阶段持续回写 |
+| 📝 `pipeline.log` | 流水线阶段日志 |
+| 🤖 `generation_summary.md` | AI 生成阶段摘要 |
+| ▶️ `pytest_raw/*.stdout.log` | pytest 标准输出 |
+| ❌ `pytest_raw/*.stderr.log` | pytest 错误输出 |
+| 📊 `pytest_raw/*_junit.xml` | JUnit XML 报告 |
+| 🤖 `pytest_raw/*.agent.md` | AI 执行阶段摘要 |
+| 🔍 `analysis_inputs.json` | 分析阶段结构化输入 |
+| 🏷️ `analysis_triage.json` | 分类结果 |
+| 📄 `analysis_summary.md` | 人类可读分析摘要 |
+| 🤖 `analysis_agent.md` | AI 分析原始总结 |
+| 📊 `results.json` / `results.csv` | 结构化最终结果 |
+| 📈 `summary.md` | 最终批次摘要 |
+| 🔧 `fixes/*.md` | 单 API 修复摘要 |
+| 🔧 `fixes/*.request.json` | 修复请求快照 |
+
+---
+
+## 🏷️ 失败分类体系
+
+流水线将测试失败归入以下类别，并据此决定修复策略：
+
+| 类别 | 含义 | 默认策略 |
+|------|------|----------|
+| 🐛 `TEST_BUG` | 测试代码本身的 Bug | ✅ 自动修复 |
+| 🌐 `ENVIRONMENT_MISSING` | 缺少依赖或环境配置 | 📊 仅报告 |
+| 🚫 `UNSUPPORTED_ON_NPU` | NPU 不支持的算子 | 📊 仅报告 |
+| ⚠️ `PYTORCH_BUG` | PyTorch 框架 Bug | 🛡️ `--fix-mode safe` |
+| ⚠️ `TORCH_NPU_BUG` | torch_npu 适配层 Bug | 🛡️ `--fix-mode safe` |
+| 🔧 `OPERATOR_BUG` | 算子实现 Bug | 📊 仅报告 |
+| 🔀 `API_BEHAVIOR_MISMATCH` | API 行为与文档不一致 | 📊 仅报告 |
+| 🎲 `FLAKY_OR_UNSTABLE` | 非确定性失败 | 📊 仅报告 |
+| 📉 `INSUFFICIENT_COVERAGE` | 覆盖不足 | 📊 仅报告 |
+| ❓ `UNKNOWN` | 无法归类 | 📊 仅报告 |
+
+> 📖 详细说明见 [docs/failure_taxonomy.md](./docs/failure_taxonomy.md)
+
+---
+
+## 📅 推荐工作流
 
 ```text
-runs/20260321T091734Z/
+1. ✏️  编辑 apis.txt，加入需要测试的 API
+2. 🚀  运行 python -m scripts.pipeline run --input apis.txt --fix-mode tests
+3. 📈  查看 summary.md 了解批次整体结果
+4. 🔍  查看 analysis_summary.md 了解失败分类
+5. 📊  用 results.csv 过滤环境 / 框架 / 算子问题
+6. 🛡️  确认后可选 --fix-mode safe 进行源码修复
 ```
 
-关键工件如下：
+---
 
-| 文件 | 说明 |
-| --- | --- |
-| `manifest.csv` | 本次运行的实时进度表；会随着生成、执行、分析、修复和最终结果持续回写 |
-| `pipeline.log` | 外层 pipeline 的阶段日志 |
-| `generation_summary.md` | Codex 生成阶段摘要 |
-| `pytest_raw/*.command.txt` | pytest 原始命令 |
-| `pytest_raw/*.stdout.log` | pytest 标准输出 |
-| `pytest_raw/*.stderr.log` | pytest 错误输出 |
-| `pytest_raw/*_junit.xml` | JUnit XML |
-| `pytest_raw/*.codex.md` | Codex 执行阶段摘要 |
-| `analysis_inputs.json` | 提供给分析阶段的结构化输入 |
-| `analysis_triage.json` | 分析阶段输出的分类结果 |
-| `analysis_summary.md` | 分析阶段的人类可读摘要 |
-| `analysis_codex.md` | Codex 分析阶段原始总结 |
-| `results.json` | 结构化最终结果 |
-| `results.csv` | 表格友好的最终结果 |
-| `summary.md` | 最终批次摘要 |
-| `fixes/*.request.json` | 单 API 修复请求快照 |
-| `fixes/*.md` | 单 API 修复摘要 |
-| `fixes/*.stdout.log` | 修复阶段日志 |
-| `fixes/*.stderr.log` | 修复阶段错误日志 |
+## 🔄 配置同步
 
-## Failure Classification
+本仓库同时维护两套 AI CLI 配置，并提供内置同步工具：
 
-当前失败分类包括：
+| 目录 | 适用 CLI | 格式 |
+|------|----------|------|
+| `.codex/` | OpenAI Codex CLI | TOML agents + SKILL.md |
+| `.github/` | GitHub Copilot CLI | Markdown agents + SKILL.md |
 
-- `TEST_BUG`
-- `ENVIRONMENT_MISSING`
-- `UNSUPPORTED_ON_NPU`
-- `PYTORCH_BUG`
-- `TORCH_NPU_BUG`
-- `OPERATOR_BUG`
-- `API_BEHAVIOR_MISMATCH`
-- `FLAKY_OR_UNSTABLE`
-- `INSUFFICIENT_COVERAGE`
-- `UNKNOWN`
+```bash
+# 📤 从 Codex 同步到 Copilot（推荐方向）
+python -m scripts.config_sync --from codex --to copilot
 
-默认修复策略：
+# 🔍 查看两端配置差异
+python -m scripts.config_sync --diff
 
-- `TEST_BUG`
-  默认可自动修复；包括测试代码错误以及使用 `pytest.xfail` 这类策略违规
-- `ENVIRONMENT_MISSING` / `UNSUPPORTED_ON_NPU` / `OPERATOR_BUG` / `FLAKY_OR_UNSTABLE` / `INSUFFICIENT_COVERAGE`
-  默认只报告，不自动改
-- `PYTORCH_BUG` / `TORCH_NPU_BUG`
-  仅 `--fix-mode safe` 才允许尝试低风险源码修复
+# 👀 预览操作（不实际写入）
+python -m scripts.config_sync --from codex --to copilot --dry-run
+```
 
-更详细说明见 [docs/failure_taxonomy.md](./docs/failure_taxonomy.md)。
+> **💡 提示**：[SKILL.md](https://agentskills.io) 遵循 Agent Skills Open Standard，跨平台通用。Agent 定义格式由同步工具自动转换（TOML ↔ Markdown+YAML）。
 
-## Recommended Daily Workflow
+### 🤖 内置 AI Agents
 
-日常建议按这个节奏使用：
+| Agent | 职责 |
+|-------|------|
+| `api_test_generator` | 为单个 API 生成 NPU pytest 测试 |
+| `api_test_reviewer` | 审查测试文件是否符合规范 |
+| `api_test_fixer` | 修复测试文件中的 Bug |
+| `api_safe_fixer` | 低风险修复，可涉及 `pytorch/` 或 `ascend-pytorch/` |
 
-1. 编辑 `apis.txt`
-2. 执行 `python -m scripts.pipeline run --input apis.txt --fix-mode tests`
-3. 先看 `summary.md` 了解批次整体结果
-4. 再看 `analysis_summary.md` 了解失败分类和哪些会被自动修
-5. 用 `results.csv` 过滤剩余的环境、框架、算子问题
-6. 只有确实接受源码自动修改时，再考虑 `--fix-mode safe`
+### 🎯 内置 Skills
 
-## Repository Pointers
+| Skill | 触发场景 |
+|-------|----------|
+| `batch-npu-api-test` | 批量处理 API 的生成 / 审查 / 修复 |
+| `single-api-fix` | 单个 API 的修复请求分发 |
 
-- [scripts/pipeline.py](./scripts/pipeline.py)
-- [scripts/run_api_batch.sh](./scripts/run_api_batch.sh)
-- [process_api_manifest.py](./process_api_manifest.py)
-- [docs/failure_taxonomy.md](./docs/failure_taxonomy.md)
-- [AGENTS.md](./AGENTS.md)
+---
+
+## 🗂️ 项目结构
+
+```text
+pta_testcase/
+├── 📄 AGENTS.md                    # 仓库约定与开发规范（跨平台）
+├── 📄 README.md                    # 本文件
+├── 📂 .codex/                      # Codex CLI 配置
+│   ├── agents/*.toml               #   Agent 定义
+│   └── skills/*/SKILL.md           #   Skill 定义
+├── 📂 .github/                     # Copilot CLI 配置（自动同步）
+│   ├── agents/*.agent.md           #   Agent 定义
+│   ├── skills/*/SKILL.md           #   Skill 定义
+│   └── copilot-instructions.md     #   全局指令
+├── 📂 scripts/
+│   ├── 🐍 pipeline.py              # 主流水线（~1500 行）
+│   ├── 📂 backends/                # CLI 后端抽象层
+│   │   ├── base.py                 #   CliBackend ABC
+│   │   ├── codex.py                #   CodexBackend
+│   │   └── copilot.py              #   CopilotBackend
+│   ├── 🐍 config_sync.py           # 跨 CLI 配置同步工具
+│   └── 🐚 run_api_batch.sh         # 快捷入口
+├── 📂 test/api_test/               # 生成的测试文件（一 API 一文件）
+├── 📂 docs/
+│   └── failure_taxonomy.md         # 失败分类详细说明
+├── 📂 runs/                        # Run Artifacts（每次运行一个子目录）
+├── 📂 pytorch/                     # PyTorch 源码（submodule）
+└── 📂 ascend-pytorch/              # torch_npu 源码（submodule）
+```
+
+---
+
+## 🌐 环境要求
+
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| Python | 3.11+ | 流水线运行时 |
+| PyTorch | 2.x | 被测框架 |
+| torch_npu | latest | NPU 后端 |
+| pytest | 7+ | 测试执行 |
+| PyYAML | — | 配置同步 |
+| AI CLI | — | `codex` 或 `copilot`（至少装一个） |
+
+---
+
+## 🤝 贡献
+
+1. 修改 Agent 或 Skill 配置时，请在 `.codex/` 中编辑后运行同步：
+   ```bash
+   python -m scripts.config_sync --from codex --to copilot
+   ```
+2. 新增失败类别请同步更新 `docs/failure_taxonomy.md`
+3. 测试文件遵循 [AGENTS.md](./AGENTS.md) 中的规范
+
+---
+
+<div align="center">
+
+**Built with 🤖 AI-assisted development**
+
+[Codex CLI](https://github.com/openai/codex) · [Copilot CLI](https://docs.github.com/copilot) · [Agent Skills Open Standard](https://agentskills.io)
+
+</div>
