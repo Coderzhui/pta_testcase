@@ -1,4 +1,4 @@
-“””
+"""
 测试目的：验证 `torch.utils._python_dispatch.is_traceable_wrapper_subclass` 在 NPU 环境下的完整功能行为。
 API 名称：torch.utils._python_dispatch.is_traceable_wrapper_subclass
 
@@ -13,7 +13,7 @@ API 名称：torch.utils._python_dispatch.is_traceable_wrapper_subclass
 
 未覆盖项及原因：
 - 无，已满足 API 功能一致性标准。
-“””
+"""
 
 import pytest
 
